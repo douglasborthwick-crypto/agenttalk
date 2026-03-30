@@ -1,10 +1,33 @@
 # AgentTalk
 
-Condition-gated sessions for agent-to-agent communication. Both agents verify their wallets satisfy the same on-chain conditions before a session begins.
+**Wallet auth for agent-to-agent communication.**
 
-**Live at [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/)**
+OAuth proves who you are. API keys prove you have permission. AgentTalk proves what you hold — on-chain, across 33 blockchains, cryptographically signed, verifiable by anyone.
+
+Before two agents exchange data, both verify their wallets satisfy the same conditions. Token balances, NFT ownership, compliance attestations — whatever the use case requires. The blockchain state is the credential. Sell your tokens, lose your session. No secrets to share. No identity to verify first. No static credentials that expire or get leaked.
+
+Three API calls to a mutual session. [Try it free](https://skyemeta.com/agenttalk/) — 10 calls per wallet, no signup.
+
+## Why Not OAuth?
+
+Agent protocols today authenticate agents the same way we authenticate humans: API keys, OAuth tokens, mTLS certificates. These prove *identity* — "this agent has permission to be here."
+
+But for agent commerce, DeFi coordination, and governance workflows, the question isn't who you are. It's **what you hold**. A procurement agent negotiating a $1M deal should prove it represents a wallet with $1M — not just that it has a valid OAuth token.
+
+AgentTalk is [condition-based access](https://insumermodel.com/how-it-works/) for the agent layer. You define conditions. Both agents are evaluated against live blockchain state. The result is an ECDSA-signed boolean — pass or fail — not a balance dump. The signed attestation is verifiable offline via [JWKS](https://insumermodel.com/.well-known/jwks.json). No callback to us required.
+
+| | AgentTalk | OAuth 2.0 | API Keys | mTLS |
+|---|---|---|---|---|
+| Proves what agent holds | Yes | No | No | No |
+| Dynamic (sell token = lose access) | Yes | No | No | No |
+| Multi-chain (33 blockchains) | Yes | No | No | No |
+| Mutual verification (both sides) | Yes | No | No | Yes |
+| Composable (up to 10 conditions) | Yes | No | No | No |
+| No shared secrets | Yes | No | No | Yes |
 
 ## How It Works
+
+Read the chain. Evaluate the conditions. Sign the result.
 
 ```
 Agent A                          AgentTalk                         Agent B
@@ -19,15 +42,15 @@ Agent A                          AgentTalk                         Agent B
    |<-- { valid: true, agents } ----|                                |
 ```
 
-1. **Declare** — Agent A sets conditions (token balances, NFT ownership, EAS attestations) across any of 33 chains
-2. **Join** — Agent B submits its wallet. Both wallets are verified against the conditions via [InsumerAPI](https://insumermodel.com)
-3. **Session** — If both pass, each agent gets an ECDSA-signed attestation JWT (ES256, `kid: "insumer-attest-v1"`)
-4. **Verify** — Either agent can check or re-verify the session at any time. Sell your tokens, lose your session
+1. **Declare** — Agent A sets conditions across any of 33 chains. Its wallet is attested immediately.
+2. **Join** — Agent B joins with its wallet. Both wallets are evaluated against the same conditions.
+3. **Session** — If both pass, each agent gets an ECDSA-signed JWT (`ES256`, `kid: "insumer-attest-v1"`). Both can verify at any time.
+4. **Re-verify** — Sessions can be re-attested on demand against current on-chain state. Dynamic enforcement, not a one-time check.
 
 ## Quick Start
 
 ```bash
-# 1. Agent A declares conditions (free tier — no API key needed for first 10 calls)
+# 1. Declare conditions (free tier — no API key needed)
 curl -X POST https://skyemeta.com/api/agenttalk/declare \
   -H "Content-Type: application/json" \
   -d '{
@@ -44,187 +67,74 @@ curl -X POST https://skyemeta.com/api/agenttalk/declare \
   }'
 # Returns: { "channelId": "ch_...", "conditionsHash": "0x...", "expiresAt": "..." }
 
-# 2. Agent B joins (no API key needed — creator pays both sides)
+# 2. Join (no API key — creator pays both sides)
 curl -X POST https://skyemeta.com/api/agenttalk/join \
   -H "Content-Type: application/json" \
-  -d '{
-    "channelId": "ch_...",
-    "wallet": "0xAgentB..."
-  }'
-# Returns: { "sessionId": "ses_...", "agents": [{ "wallet", "attestation" }, ...] }
+  -d '{ "channelId": "ch_...", "wallet": "0xAgentB..." }'
+# Returns: { "sessionId": "ses_...", "agents": [{ wallet, attestation }, ...] }
 
-# 3. Either agent verifies the session
+# 3. Verify
 curl "https://skyemeta.com/api/agenttalk/session?id=ses_..."
 # Returns: { "valid": true, "agents": [...], "conditions": [...] }
 ```
 
-## API Reference
+See [`examples/`](examples/) for complete scripts in bash, Python, and JavaScript.
 
-### `POST /api/agenttalk/declare`
+## Use Cases
 
-Create a condition-gated channel. Creator's wallet is attested on creation.
-
-**Headers:**
-- `x-api-key` (optional) — InsumerAPI key. Omit to use free tier (10 calls per wallet)
-
-**Body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `wallet` | string | Yes | Creator's EVM wallet address |
-| `conditions` | array | Yes | 1–10 condition objects (see [Condition Types](#condition-types)) |
-| `solanaWallet` | string | No | Solana wallet address (if conditions target Solana) |
-| `expiresIn` | number | No | Channel TTL in seconds (default: 3600) |
-
-**Response:**
-
-```json
-{
-  "channelId": "ch_a1b2c3d4e5f6...",
-  "conditionsHash": "0x7f83b165...",
-  "expiresAt": "2026-03-16T13:00:00.000Z"
-}
-```
-
-### `POST /api/agenttalk/join`
-
-Join a channel. Joiner's wallet is attested. If both agents pass, a session is created.
-
-**No API key required.** The channel creator's key covers both attestations.
-
-**Body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `channelId` | string | Yes | Channel ID from declare response |
-| `wallet` | string | Yes | Joiner's EVM wallet address |
-| `solanaWallet` | string | No | Solana wallet address |
-
-**Response:**
-
-```json
-{
-  "sessionId": "ses_x9y8z7...",
-  "expiresAt": "2026-03-16T13:00:00.000Z",
-  "agents": [
-    {
-      "wallet": "0xabc123...",
-      "attestation": {
-        "attestation": { "id": "ATST-...", "pass": true, "results": [...] },
-        "sig": "base64...",
-        "kid": "insumer-attest-v1",
-        "jwt": "eyJhbGciOiJFUzI1NiI..."
-      }
-    },
-    {
-      "wallet": "0xdef456...",
-      "attestation": { "..." }
-    }
-  ]
-}
-```
-
-### `GET /api/agenttalk/session`
-
-Check if a session is still valid.
-
-**Query params:** `id` — session ID
-
-**Response:**
-
-```json
-{
-  "valid": true,
-  "agents": [
-    { "wallet": "0x...", "attestation": { "..." } },
-    { "wallet": "0x...", "attestation": { "..." } }
-  ],
-  "conditions": [...],
-  "issuedAt": "2026-03-16T12:00:00.000Z",
-  "expiresAt": "2026-03-16T13:00:00.000Z"
-}
-```
-
-### `POST /api/agenttalk/session`
-
-Re-verify a session. Both wallets are re-attested against current on-chain state. If either agent no longer qualifies, the session is invalidated and deleted.
-
-**Body:** `{ "sessionId": "ses_..." }`
-
-**Response:** Same shape as GET. Returns `{ "valid": false }` if either agent fails.
+- **Supply Chain Negotiation** — Two procurement agents verify they each hold $1M+ USDC before sharing pricing data. On-chain proof of financial capacity, not a signed NDA.
+- **Financial Agent Coordination** — A portfolio agent only shares allocation data with agents holding specific governance tokens. Attestation replaces allow-lists.
+- **Compliance-Gated Data Exchange** — Agents verify each other holds compliance attestation NFTs (e.g., EAS credentials). Revoke the NFT, close the session.
+- **Cross-Org Workflow Automation** — DAO-to-DAO agents verify governance token holdings before executing joint proposals. On-chain qualification replaces manual approval chains.
 
 ## Condition Types
 
-Each condition in the `conditions` array is evaluated by [InsumerAPI](https://insumermodel.com/developers/api-reference/).
+Conditions are evaluated by [InsumerAPI](https://insumermodel.com/developers/api-reference/) against live blockchain state.
 
-### `token_balance`
-
+**`token_balance`** — Does the wallet hold at least X tokens?
 ```json
-{
-  "type": "token_balance",
-  "contractAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-  "chainId": 1,
-  "threshold": 1000000,
-  "decimals": 6
-}
+{ "type": "token_balance", "contractAddress": "0xA0b86991...", "chainId": 1, "threshold": 1000000, "decimals": 6 }
+```
+Use `"native"` for ETH, BNB, MATIC, SOL, XRP, BTC, etc.
+
+**`nft_ownership`** — Does the wallet hold this NFT?
+```json
+{ "type": "nft_ownership", "contractAddress": "0xBC4CA0Ed...", "chainId": 1 }
 ```
 
-Use `"native"` as `contractAddress` for ETH, BNB, MATIC, XRP, BTC, etc.
-
-### `nft_ownership`
-
+**`eas_attestation`** — Does the wallet have a valid on-chain attestation?
 ```json
-{
-  "type": "nft_ownership",
-  "contractAddress": "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
-  "chainId": 1
-}
+{ "type": "eas_attestation", "template": "gitcoin-passport-v2" }
 ```
 
-### `eas_attestation`
-
-```json
-{
-  "type": "eas_attestation",
-  "schemaId": "0x...",
-  "chainId": 1
-}
-```
-
-Or use a pre-configured template (e.g., Gitcoin Passport):
-
-```json
-{
-  "type": "eas_attestation",
-  "template": "gitcoin-passport-v2"
-}
-```
-
-## Supported Chains
-
-33 blockchains: Ethereum, Bitcoin, Solana, XRP Ledger, Polygon, Base, Arbitrum, Optimism, Avalanche, BNB Chain, Sonic, Gnosis, Mantle, Scroll, Linea, ZKsync, Blast, Celo, Moonbeam, opBNB, Unichain, Ink, Sei, Berachain, ApeChain, Soneium, World Chain, Taiko, Ronin, Moonriver, Viction, Chiliz, Plume.
+Up to 10 conditions per channel. All must pass (AND logic). 33 blockchains: Ethereum, Bitcoin, Solana, XRP Ledger, Polygon, Base, Arbitrum, Optimism, Avalanche, BNB Chain, and 23 more.
 
 ## Verification
 
-Attestation JWTs are ES256-signed with `kid: "insumer-attest-v1"`. Verify offline via JWKS:
-
-```
-GET https://api.insumermodel.com/v1/jwks
-```
-
-Or the static endpoint:
+Every attestation is an ES256 JWT signed with `kid: "insumer-attest-v1"`. Verify offline — no network call needed after the initial attestation:
 
 ```
 GET https://insumermodel.com/.well-known/jwks.json
 ```
 
-Any standard JWT library (jose, jsonwebtoken, Kong, Nginx, Cloudflare Access, AWS API Gateway) can verify without calling back to us.
+Works with any standard JWT library: jose, jsonwebtoken, Kong, Nginx, AWS API Gateway. Each condition produces a `conditionHash` (SHA-256 of canonical JSON), so verifiers can confirm exactly which conditions were checked without seeing raw balances.
 
-Each condition produces a `conditionHash` — the SHA-256 of the canonical sorted-key JSON of the evaluated condition. This lets verifiers confirm exactly which conditions were checked without seeing raw balances.
+## API Reference
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/agenttalk/declare` | POST | `x-api-key` or free tier | Create a condition-gated channel |
+| `/api/agenttalk/join` | POST | None (creator pays) | Join a channel, create mutual session |
+| `/api/agenttalk/session` | GET | None | Check session validity |
+| `/api/agenttalk/session` | POST | None (creator pays) | Re-verify both wallets against current state |
+
+Full request/response details: [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/)
 
 ## Discovery
 
-Agent discovery file at [`skyemeta.com/.well-known/agents.json`](https://skyemeta.com/.well-known/agents.json).
+```
+GET https://skyemeta.com/.well-known/agents.json
+```
 
 ## Pricing
 
@@ -234,37 +144,25 @@ Agent discovery file at [`skyemeta.com/.well-known/agents.json`](https://skyemet
 | Growth | 33 credits/$1 | $100–$499 |
 | Scale | 50 credits/$1 | $500+ |
 
-Each session uses 2 credits (one attestation per agent). Creator pays both sides. **Free tier: 10 calls per wallet, no key needed.**
+Each session = 2 credits (one per agent). Creator pays both sides. **Free tier: 10 calls per wallet, no key needed.**
 
-Payment: send USDC, USDT, or BTC to the payment wallet, then call `POST /api/agenttalk/buy-key` with the transaction hash. Key returned immediately. No signup, no email, no credit cards. Minimum $5.
+Pay with USDC, USDT, or BTC. No signup. See [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/) for details.
 
-See [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/) for payment wallet addresses and full details.
+## Protocols
 
-## Use Cases
+AgentTalk implements wallet auth as the qualification layer for agent communication protocols:
 
-- **Supply Chain Negotiation** — Two procurement agents verify they each hold $1M+ USDC before sharing pricing data
-- **Financial Agent Coordination** — A portfolio agent only shares allocations with agents holding specific governance tokens
-- **Compliance-Gated Data Exchange** — Agents verify each other holds compliance attestation NFTs (e.g., EAS credentials)
-- **Cross-Org Workflow Automation** — DAO-to-DAO agents verify governance token holdings before executing joint proposals
-
-## How It Compares
-
-| | AgentTalk | OAuth 2.0 | API Keys | mTLS |
-|---|---|---|---|---|
-| Proves what agent holds | Yes | No | No | No |
-| Dynamic access | Yes | No | No | No |
-| Multi-chain (33) | Yes | No | No | No |
-| Mutual verification | Yes | No | No | Yes |
-| Composable conditions | Yes | No | No | No |
-| No shared secrets | Yes | No | No | Yes |
-| Setup complexity | 3 API calls | Medium | Low | High |
+- **A2A** — Wallet qualification for agent discovery and Agent Cards
+- **MCP** — Condition-based tool gating via MCP parameters
+- **ACP** — Wallet attestation as the agent handshake layer
+- **x402** — Proof-of-holdings alongside proof-of-payment
 
 ## Related
 
-- [InsumerAPI](https://insumermodel.com/developers/) — The wallet verification engine powering AgentTalk
-- [insumer-verify](https://www.npmjs.com/package/insumer-verify) — npm package for offline JWT verification
-- [SkyeGate](https://skyemeta.com/skyegate/) — Wallet-verified content for WordPress
-- [SkyeWoo](https://skyemeta.com/skyewoo/) — Wallet-verified commerce for WooCommerce
+- [InsumerAPI](https://insumermodel.com/developers/) — The wallet auth engine. Read the chain, evaluate conditions, sign the result.
+- [insumer-verify](https://www.npmjs.com/package/insumer-verify) — Offline JWT verification. Zero dependencies.
+- [SkyeGate](https://skyemeta.com/skyegate/) — Condition-based access for WordPress
+- [SkyeWoo](https://skyemeta.com/skyewoo/) — Condition-based access for WooCommerce
 
 ## License
 
