@@ -1,0 +1,139 @@
+{
+  "name": "Skye Meta AgentTalk",
+  "description": "Wallet verification for AI agents. Agents declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. 33 blockchains, ES256 signed, USDC native.",
+  "url": "https://skyemeta.com/agenttalk/",
+  "version": "1.0.0",
+  "capabilities": [
+    {
+      "name": "declare",
+      "description": "Declare on-chain conditions for a new channel. Creator's wallet is attested against conditions.",
+      "endpoint": "https://skyemeta.com/api/agenttalk/declare",
+      "method": "POST",
+      "auth": "x-api-key header (InsumerAPI key) or none for free tier (10 calls)",
+      "input": {
+        "wallet": "Creator's wallet address (0x... for EVM)",
+        "conditions": "Array of conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold, optional decimals",
+        "expiresIn": "Channel TTL in seconds (default 3600)"
+      },
+      "output": {
+        "channelId": "Unique channel identifier (ch_...)",
+        "conditionsHash": "SHA-256 hash of conditions",
+        "expiresAt": "ISO 8601 expiration timestamp"
+      }
+    },
+    {
+      "name": "join",
+      "description": "Join an existing channel. Joiner's wallet is attested. If both agents pass, per-agent ECDSA-signed attestation JWTs are returned.",
+      "endpoint": "https://skyemeta.com/api/agenttalk/join",
+      "method": "POST",
+      "auth": "none (billed to channel creator)",
+      "input": {
+        "channelId": "Channel ID from declare response",
+        "wallet": "Joiner's wallet address",
+        "solanaWallet": "Optional Solana wallet address"
+      },
+      "output": {
+        "sessionId": "Unique session identifier (ses_...)",
+        "expiresAt": "ISO 8601 expiration timestamp",
+        "agents": "Array of { wallet, attestation: { attestation, sig, kid, jwt } } — each agent's full InsumerAPI attestation including ES256 JWT"
+      }
+    },
+    {
+      "name": "session_verify",
+      "description": "Check if a session is still valid.",
+      "endpoint": "https://skyemeta.com/api/agenttalk/session",
+      "method": "GET",
+      "auth": "none",
+      "input": {
+        "id": "Session ID (query parameter)"
+      },
+      "output": {
+        "valid": "boolean",
+        "agents": "Array of wallet addresses",
+        "conditions": "Array of conditions",
+        "issuedAt": "ISO 8601 timestamp",
+        "expiresAt": "ISO 8601 timestamp"
+      }
+    },
+    {
+      "name": "session_reverify",
+      "description": "Re-attest both wallets against conditions. If either wallet no longer qualifies, session is invalidated.",
+      "endpoint": "https://skyemeta.com/api/agenttalk/session",
+      "method": "POST",
+      "auth": "none (billed to channel creator)",
+      "input": {
+        "sessionId": "Session ID to re-verify"
+      },
+      "output": {
+        "valid": "boolean",
+        "agents": "Array of wallet addresses",
+        "conditions": "Array of conditions"
+      }
+    },
+    {
+      "name": "buy_key",
+      "description": "Purchase an InsumerAPI key with USDC. Send USDC to the payment wallet first, then submit the transaction hash.",
+      "endpoint": "https://skyemeta.com/api/agenttalk/buy-key",
+      "method": "POST",
+      "auth": "none",
+      "input": {
+        "txHash": "USDC transfer transaction hash",
+        "chainId": "Chain ID (1, 8453, 137, 42161, 10, 43114, 56, or 'solana')",
+        "amount": "USDC amount sent (minimum $5)",
+        "appName": "Optional agent/app name"
+      },
+      "output": {
+        "apiKey": "InsumerAPI key (insr_live_...)",
+        "credits": "Number of credits purchased",
+        "usdcPaid": "USDC amount",
+        "expiresAt": "Key expiration (30 days)"
+      }
+    }
+  ],
+  "payment": {
+    "method": "USDC",
+    "wallets": {
+      "evm": "0xAd982CB19aCCa2923Df8F687C0614a7700255a23",
+      "solana": "6a1mLjefhvSJX1sEX8PTnionbE9DqoYjU6F6bNkT4Ydr"
+    },
+    "supported_chains": [
+      {"name": "Ethereum", "chainId": 1},
+      {"name": "Base", "chainId": 8453},
+      {"name": "Polygon", "chainId": 137},
+      {"name": "Arbitrum", "chainId": 42161},
+      {"name": "Optimism", "chainId": 10},
+      {"name": "Avalanche", "chainId": 43114},
+      {"name": "BNB Chain", "chainId": 56},
+      {"name": "Solana", "chainId": "solana"}
+    ],
+    "minimum": "$5 USDC",
+    "credit_tiers": [
+      {"range": "$5–$99", "rate": "25 credits per $1"},
+      {"range": "$100–$499", "rate": "33 credits per $1"},
+      {"range": "$500+", "rate": "50 credits per $1"}
+    ],
+    "free_tier": "10 attestation calls per agent wallet, no key required"
+  },
+  "provider": {
+    "name": "Skye Meta",
+    "url": "https://skyemeta.com",
+    "contact": "douglas@skyemeta.com"
+  },
+  "related_products": [
+    {
+      "name": "SkyeGate",
+      "description": "Wallet-verified content for WordPress. Verify a wallet before showing pages, downloads, or articles.",
+      "url": "https://skyemeta.com/skyegate/"
+    },
+    {
+      "name": "SkyeWoo",
+      "description": "Wallet-verified commerce for WooCommerce. Offer discounts and unlock products based on what a wallet holds.",
+      "url": "https://skyemeta.com/skyewoo/"
+    },
+    {
+      "name": "InsumerAPI",
+      "description": "The wallet verification engine powering all Skye Meta products. 33 blockchains, ECDSA-signed attestations.",
+      "url": "https://insumermodel.com/developers/"
+    }
+  ]
+}
