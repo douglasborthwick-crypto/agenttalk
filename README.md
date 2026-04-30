@@ -104,7 +104,7 @@ Use `"native"` for ETH, BNB, MATIC, SOL, XRP, BTC, etc.
 
 **`eas_attestation`** — Does the wallet have a valid on-chain attestation?
 ```json
-{ "type": "eas_attestation", "template": "gitcoin-passport-v2" }
+{ "type": "eas_attestation", "template": "gitcoin_passport_score" }
 ```
 
 Up to 10 conditions per channel. All must pass (AND logic). 33 blockchains: Ethereum, Bitcoin, Solana, XRP Ledger, Polygon, Base, Arbitrum, Optimism, Avalanche, BNB Chain, and 23 more.
