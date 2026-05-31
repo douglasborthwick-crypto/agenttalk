@@ -31,30 +31,44 @@ Read the chain. Evaluate the conditions. Sign the result.
 
 ```
 Agent A                          AgentTalk                         Agent B
-   |                                |                                |
-   |-- POST /declare (conditions) ->|                                |
+   |-- POST /challenge (declare) -->|                                |
+   |<-- message to sign ------------|                                |
+   |-- POST /declare (sig, conds) ->|                                |
    |<-- channelId, conditionsHash --|                                |
-   |                                |                                |
-   |                                |<-- POST /join (channelId) -----|
+   |                                |<-- POST /challenge (join) -----|
+   |                                |--- message to sign ----------->|
+   |                                |<-- POST /join (sig, channelId)-|
    |                                |--- sessionId, attestations --->|
-   |                                |                                |
    |-- GET /session?id=ses_... ---->|                                |
    |<-- { valid: true, agents } ----|                                |
 ```
 
-1. **Declare** — Agent A sets conditions across any of 33 chains. Its wallet is attested immediately.
-2. **Join** — Agent B joins with its wallet. Both wallets are evaluated against the same conditions.
+0. **Prove control** — Before declaring or joining, an agent signs a one-time challenge with its wallet key. On-chain holdings are public, so naming a wallet proves nothing; the signature proves the wallet is the agent's. Control — not knowledge of the address — grants entry.
+1. **Declare** — Agent A signs its challenge, then sets conditions across any of 33 chains. Its wallet is attested immediately.
+2. **Join** — Agent B signs its own challenge, then joins. Both wallets are evaluated against the same conditions.
 3. **Session** — If both pass, each agent gets an ECDSA-signed JWT (`ES256`, `kid: "insumer-attest-v1"`). Both can verify at any time.
 4. **Re-verify** — Sessions can be re-attested on demand against current on-chain state. Dynamic enforcement, not a one-time check.
 
 ## Quick Start
 
+For a runnable end-to-end script (keypair generation + signing handled for you),
+see [`examples/`](examples/) — `session.js`, `session.py`, or `session.sh`.
+
 ```bash
-# 1. Declare conditions (free tier — no API key needed)
+# 1. Prove control of Agent A's wallet
+curl -X POST https://skyemeta.com/api/agenttalk/challenge \
+  -H "Content-Type: application/json" \
+  -d '{ "wallet": "0xAgentA...", "action": "declare" }'
+# Returns: { "message": "AgentTalk proof-of-control\n...", "nonce": "...", "expiresInSec": 120 }
+# Sign `message` with Agent A's wallet key (EIP-191). e.g. with foundry:
+#   cast wallet sign --private-key $PK "$message"
+
+# 2. Declare conditions, passing the signature (free tier — no API key needed)
 curl -X POST https://skyemeta.com/api/agenttalk/declare \
   -H "Content-Type: application/json" \
   -d '{
     "wallet": "0xAgentA...",
+    "signature": "0x...",
     "conditions": [
       {
         "type": "token_balance",
@@ -67,13 +81,14 @@ curl -X POST https://skyemeta.com/api/agenttalk/declare \
   }'
 # Returns: { "channelId": "ch_...", "conditionsHash": "0x...", "expiresAt": "..." }
 
-# 2. Join (no API key — creator pays both sides)
+# 3. Join — Agent B proves control of its own wallet first (challenge with action "join"),
+#    then joins (no API key — creator pays both sides)
 curl -X POST https://skyemeta.com/api/agenttalk/join \
   -H "Content-Type: application/json" \
-  -d '{ "channelId": "ch_...", "wallet": "0xAgentB..." }'
+  -d '{ "channelId": "ch_...", "wallet": "0xAgentB...", "signature": "0x..." }'
 # Returns: { "sessionId": "ses_...", "agents": [{ wallet, attestation }, ...] }
 
-# 3. Verify
+# 4. Verify
 curl "https://skyemeta.com/api/agenttalk/session?id=ses_..."
 # Returns: { "valid": true, "agents": [...], "conditions": [...] }
 ```

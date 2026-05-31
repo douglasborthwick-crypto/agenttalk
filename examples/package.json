@@ -1,0 +1,12 @@
+{
+  "name": "agenttalk-examples",
+  "private": true,
+  "type": "module",
+  "description": "Runnable AgentTalk session examples",
+  "scripts": {
+    "start": "node session.js"
+  },
+  "dependencies": {
+    "viem": "^2.51.3"
+  }
+}
