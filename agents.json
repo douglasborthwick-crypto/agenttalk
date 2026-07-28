@@ -1,6 +1,6 @@
 {
   "name": "Skye Meta AgentTalk",
-  "description": "Wallet verification for AI agents. Agents declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. 33 blockchains, ES256 signed, USDC native.",
+  "description": "Wallet verification for AI agents. Agents declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. 37 blockchains, ES256 signed, USDC native.",
   "url": "https://skyemeta.com/agenttalk/",
   "version": "1.0.0",
   "capabilities": [
@@ -132,7 +132,7 @@
     },
     {
       "name": "InsumerAPI",
-      "description": "The wallet verification engine powering all Skye Meta products. 33 blockchains, ECDSA-signed attestations.",
+      "description": "The wallet verification engine powering all Skye Meta products. 37 blockchains, ECDSA-signed attestations.",
       "url": "https://insumermodel.com/developers/"
     }
   ]
