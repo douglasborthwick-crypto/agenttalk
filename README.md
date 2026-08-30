@@ -46,7 +46,7 @@ Agent A                          AgentTalk                         Agent B
 0. **Prove control** — Before declaring or joining, an agent signs a one-time challenge with its wallet key. On-chain holdings are public, so naming a wallet proves nothing; the signature proves the wallet is the agent's. Control — not knowledge of the address — grants entry.
 1. **Declare** — Agent A signs its challenge, then sets conditions across any of 37 chains. Its wallet is attested immediately.
 2. **Join** — Agent B signs its own challenge, then joins. Both wallets are evaluated against the same conditions.
-3. **Session** — If both pass, each agent gets an ECDSA-signed JWT (`ES256`, `kid: "insumer-attest-v1"`). Both can verify at any time.
+3. **Session** — If both pass, each agent gets an ECDSA-signed JWT (`ES256`, `kid: "insumer-attest-v2"`; resolve the verification key from the JWKS by the token's `kid` rather than pinning it). Both can verify at any time.
 4. **Re-verify** — Sessions can be re-attested on demand against current on-chain state. Dynamic enforcement, not a one-time check.
 
 ## Quick Start
@@ -74,7 +74,7 @@ curl -X POST https://skyemeta.com/api/agenttalk/declare \
         "type": "token_balance",
         "contractAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         "chainId": 1,
-        "threshold": 1000000,
+        "threshold": "1000000",
         "decimals": 6
       }
     ]
@@ -108,7 +108,7 @@ Conditions are evaluated by [InsumerAPI](https://insumermodel.com/developers/api
 
 **`token_balance`** — Does the wallet hold at least X tokens?
 ```json
-{ "type": "token_balance", "contractAddress": "0xA0b86991...", "chainId": 1, "threshold": 1000000, "decimals": 6 }
+{ "type": "token_balance", "contractAddress": "0xA0b86991...", "chainId": 1, "threshold": "1000000", "decimals": 6 }
 ```
 Use `"native"` for ETH, BNB, MATIC, SOL, XRP, BTC, etc.
 
@@ -126,7 +126,7 @@ Up to 10 conditions per channel. All must pass (AND logic). 37 blockchains: Ethe
 
 ## Verification
 
-Every attestation is an ES256 JWT signed with `kid: "insumer-attest-v1"`. Verify offline — no network call needed after the initial attestation:
+Every attestation is an ES256 JWT. Read the token's `kid` and resolve the matching key from the JWKS (AgentTalk sessions sign under `insumer-attest-v2`, like every key minted today; never pin the literal, kids rotate). Verify offline — no network call needed after the initial attestation:
 
 ```
 GET https://insumermodel.com/.well-known/jwks.json

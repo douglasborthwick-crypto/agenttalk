@@ -12,7 +12,7 @@
       "auth": "x-api-key header (InsumerAPI key) or none for free tier (10 calls)",
       "input": {
         "wallet": "Creator's wallet address (0x... for EVM)",
-        "conditions": "Array of conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold, optional decimals",
+        "conditions": "Array of conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold (decimal string, e.g. \"1000\"), optional decimals",
         "expiresIn": "Channel TTL in seconds (default 3600)"
       },
       "output": {
