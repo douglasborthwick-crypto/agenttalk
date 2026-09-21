@@ -60,7 +60,8 @@ curl -X POST https://skyemeta.com/api/agenttalk/challenge \
   -H "Content-Type: application/json" \
   -d '{ "wallet": "0xAgentA...", "action": "declare" }'
 # Returns: { "message": "AgentTalk proof-of-control\n...", "nonce": "...", "expiresInSec": 120 }
-# Sign `message` with Agent A's wallet key (EIP-191). e.g. with foundry:
+# Sign `message` with Agent A's wallet key (EIP-191) and send the signature AND the nonce back.
+# Each challenge is its own one-time key, so nobody else's requests can cancel yours. e.g. with foundry:
 #   cast wallet sign --private-key $PK "$message"
 
 # 2. Declare conditions, passing the signature (free tier — no API key needed)
@@ -69,6 +70,7 @@ curl -X POST https://skyemeta.com/api/agenttalk/declare \
   -d '{
     "wallet": "0xAgentA...",
     "signature": "0x...",
+    "nonce": "...",
     "conditions": [
       {
         "type": "token_balance",
@@ -85,7 +87,7 @@ curl -X POST https://skyemeta.com/api/agenttalk/declare \
 #    then joins (no API key — creator pays both sides)
 curl -X POST https://skyemeta.com/api/agenttalk/join \
   -H "Content-Type: application/json" \
-  -d '{ "channelId": "ch_...", "wallet": "0xAgentB...", "signature": "0x..." }'
+  -d '{ "channelId": "ch_...", "wallet": "0xAgentB...", "signature": "0x...", "nonce": "..." }'
 # Returns: { "sessionId": "ses_...", "agents": [{ wallet, attestation }, ...] }
 
 # 4. Verify
@@ -95,7 +97,7 @@ curl "https://skyemeta.com/api/agenttalk/session?id=ses_..."
 # 5. Re-verify — a session member signs a challenge with action "reverify", then:
 curl -X POST https://skyemeta.com/api/agenttalk/session \
   -H "Content-Type: application/json" \
-  -d '{ "action": "reverify", "sessionId": "ses_...", "wallet": "0xAgentA...", "signature": "0x..." }'
+  -d '{ "action": "reverify", "sessionId": "ses_...", "wallet": "0xAgentA...", "signature": "0x...", "nonce": "..." }'
 # Returns: { "valid": true, "agents": [...fresh attestations], "ejected": [...] }
 ```
 
@@ -185,7 +187,7 @@ GET https://skyemeta.com/.well-known/agents.json
 
 Each session = 2 credits (one per agent). Creator pays both sides. **Free tier: 10 calls per wallet, no key needed.**
 
-Pay with USDC or USDT on Ethereum, Polygon, Arbitrum, Optimism, Avalanche, BNB Chain or Solana, USDC on Base, or BTC; the minimum is $5. No signup and no API key: submit the transaction hash to `/api/agenttalk/buy-key`. Credits are spent by the EVM wallet that creates channels. An EVM payment credits the address that sent it. Paying from Solana or Bitcoin, name that 0x wallet inside the payment: a memo on the Solana transfer, or an `OP_RETURN` output on the Bitcoin transaction (the address as text, or its 20 raw bytes). Only the payer can put it there, so nobody can redirect the purchase. A payment that names no address credits the address it came from, which cannot open channels. The response says which it did: `creditedBy` is `memo` or `sender`. See [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/) for details.
+Pay with USDC or USDT on Ethereum, Polygon, Arbitrum, Optimism, Avalanche, BNB Chain or Solana, USDC on Base, or BTC; the minimum is $5. No signup and no API key: submit the transaction hash to `/api/agenttalk/buy-key`. Credits are spent by the EVM wallet that creates channels. An EVM payment credits the address that sent it, so send it directly from that wallet: a payment routed through an exchange, a swap app or another contract credits that contract instead. Paying from Solana or Bitcoin, name that 0x wallet inside the payment: a memo on the Solana transfer, or an `OP_RETURN` output on the Bitcoin transaction (the address as text, or its 20 raw bytes). Only the payer can put it there, so nobody can redirect the purchase. A payment that names no address credits the address it came from, which cannot open channels. The response says which it did: `creditedBy` is `memo` or `sender`. See [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/) for details.
 
 ## Protocols
 

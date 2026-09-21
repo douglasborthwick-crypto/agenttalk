@@ -32,7 +32,8 @@ const agentA = privateKeyToAccount(process.env.DEMO_PRIVATE_KEY_A || process.env
 const agentB = privateKeyToAccount(process.env.DEMO_PRIVATE_KEY_B || generatePrivateKey());
 
 // Prove control of `account` for `action`: fetch a one-time challenge, sign the
-// returned message (EIP-191), return the signature.
+// returned message (EIP-191), return the signature and the challenge's nonce. Send
+// both: with the nonce, nobody else's challenge requests can cancel yours.
 async function proveControl(account, action) {
   const res = await fetch(`${BASE_URL}/challenge`, {
     method: 'POST',
@@ -40,8 +41,8 @@ async function proveControl(account, action) {
     body: JSON.stringify({ wallet: account.address, action }),
   });
   if (!res.ok) throw new Error(`challenge failed: ${res.status} ${await res.text()}`);
-  const { message } = await res.json();
-  return account.signMessage({ message });
+  const { message, nonce } = await res.json();
+  return { signature: await account.signMessage({ message }), nonce };
 }
 
 async function postJson(path, body) {
@@ -55,14 +56,14 @@ async function postJson(path, body) {
 }
 
 async function declareChannel(account, conditions) {
-  const signature = await proveControl(account, 'declare');
-  return postJson('/declare', { wallet: account.address, signature, conditions });
+  const { signature, nonce } = await proveControl(account, 'declare');
+  return postJson('/declare', { wallet: account.address, signature, nonce, conditions });
 }
 
 async function joinChannel(channelId, account) {
   // Billed to the channel creator. The joiner still proves control of its wallet.
-  const signature = await proveControl(account, 'join');
-  return postJson('/join', { channelId, wallet: account.address, signature });
+  const { signature, nonce } = await proveControl(account, 'join');
+  return postJson('/join', { channelId, wallet: account.address, signature, nonce });
 }
 
 async function verifySession(sessionId) {
@@ -75,8 +76,8 @@ async function reverifySession(sessionId, member) {
   // Re-attests every agent against current on-chain state. It must be requested
   // by a session member, signing a 'reverify' challenge; the creator pays 1 credit
   // per agent.
-  const signature = await proveControl(member, 'reverify');
-  return postJson('/session', { action: 'reverify', sessionId, wallet: member.address, signature });
+  const { signature, nonce } = await proveControl(member, 'reverify');
+  return postJson('/session', { action: 'reverify', sessionId, wallet: member.address, signature, nonce });
 }
 
 // Explain a response that did not admit the agent. Returns nothing; the caller stops.

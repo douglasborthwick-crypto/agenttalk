@@ -42,33 +42,38 @@ def make_account(*env_names: str):
     return Account.from_key(pk) if pk else Account.create()
 
 
-def prove_control(account, action: str) -> str:
-    """Fetch a one-time challenge, sign the message (EIP-191), return the 0x signature."""
+def prove_control(account, action: str) -> tuple:
+    """Fetch a one-time challenge, sign the message (EIP-191), return (0x signature, nonce).
+
+    Send both back: with the nonce, nobody else's challenge requests can cancel yours.
+    """
     resp = requests.post(
         f"{BASE_URL}/challenge",
         json={"wallet": account.address, "action": action},
         headers={"Content-Type": "application/json"},
     )
     resp.raise_for_status()
-    message = resp.json()["message"]
+    challenge = resp.json()
+    message = challenge["message"]
     signed = Account.sign_message(encode_defunct(text=message), account.key)
     sig = signed.signature.hex()
-    return sig if sig.startswith("0x") else "0x" + sig  # eth-account may omit 0x
+    sig = sig if sig.startswith("0x") else "0x" + sig  # eth-account may omit 0x
+    return sig, challenge["nonce"]
 
 
 def declare_channel(account, conditions: list) -> requests.Response:
     """Agent A proves control, then declares conditions for a channel."""
-    signature = prove_control(account, "declare")
-    body = {"wallet": account.address, "signature": signature, "conditions": conditions}
+    signature, nonce = prove_control(account, "declare")
+    body = {"wallet": account.address, "signature": signature, "nonce": nonce, "conditions": conditions}
     return requests.post(f"{BASE_URL}/declare", json=body, headers={"Content-Type": "application/json"})
 
 
 def join_channel(channel_id: str, account) -> requests.Response:
     """Agent B proves control, then joins. Billed to the channel creator."""
-    signature = prove_control(account, "join")
+    signature, nonce = prove_control(account, "join")
     return requests.post(
         f"{BASE_URL}/join",
-        json={"channelId": channel_id, "wallet": account.address, "signature": signature},
+        json={"channelId": channel_id, "wallet": account.address, "signature": signature, "nonce": nonce},
         headers={"Content-Type": "application/json"},
     )
 
@@ -83,11 +88,11 @@ def verify_session(session_id: str) -> dict:
 def reverify_session(session_id: str, member) -> requests.Response:
     """Re-attest every agent against current on-chain state. Must be requested by a
     session member, signing a 'reverify' challenge; the creator pays 1 credit per agent."""
-    signature = prove_control(member, "reverify")
+    signature, nonce = prove_control(member, "reverify")
     return requests.post(
         f"{BASE_URL}/session",
         json={"action": "reverify", "sessionId": session_id,
-              "wallet": member.address, "signature": signature},
+              "wallet": member.address, "signature": signature, "nonce": nonce},
         headers={"Content-Type": "application/json"},
     )
 

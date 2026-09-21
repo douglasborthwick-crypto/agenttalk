@@ -79,15 +79,17 @@ make_key() {
   fi
 }
 
-# prove_control <address> <private_key> <action> — echo a signature over the
-# one-time challenge for this wallet + action.
+# prove_control <address> <private_key> <action> — echo "<signature> <nonce>" for the
+# one-time challenge for this wallet + action. Send both back: with the nonce, nobody
+# else's challenge requests can cancel yours.
 prove_control() {
-  local addr="$1" pk="$2" action="$3" resp msg
+  local addr="$1" pk="$2" action="$3" resp msg nonce
   resp=$(curl -s -X POST "$BASE_URL/challenge" \
     -H "Content-Type: application/json" \
     -d "{\"wallet\": \"$addr\", \"action\": \"$action\"}")
   msg=$(json_field "$resp" message)
-  cast wallet sign --private-key "$pk" "$msg"
+  nonce=$(json_field "$resp" nonce)
+  echo "$(cast wallet sign --private-key "$pk" "$msg") $nonce"
 }
 
 PK_A=$(make_key DEMO_PRIVATE_KEY_A DEMO_PRIVATE_KEY)
@@ -100,10 +102,11 @@ echo "Agent B: $ADDR_B"
 
 echo ""
 echo "=== Step 1: Agent A proves control + declares conditions ==="
-SIG_A=$(prove_control "$ADDR_A" "$PK_A" "declare")
+read -r SIG_A NONCE_A <<< "$(prove_control "$ADDR_A" "$PK_A" "declare")"
 post_json /declare "{
     \"wallet\": \"$ADDR_A\",
     \"signature\": \"$SIG_A\",
+    \"nonce\": \"$NONCE_A\",
     \"conditions\": [
       {
         \"type\": \"token_balance\",
@@ -125,11 +128,12 @@ fi
 
 echo ""
 echo "=== Step 2: Agent B proves control + joins the channel ==="
-SIG_B=$(prove_control "$ADDR_B" "$PK_B" "join")
+read -r SIG_B NONCE_B <<< "$(prove_control "$ADDR_B" "$PK_B" "join")"
 post_json /join "{
     \"channelId\": \"$CHANNEL_ID\",
     \"wallet\": \"$ADDR_B\",
-    \"signature\": \"$SIG_B\"
+    \"signature\": \"$SIG_B\",
+    \"nonce\": \"$NONCE_B\"
   }"
 
 echo "HTTP $STATUS"
@@ -148,12 +152,13 @@ pretty "$(curl -s "$BASE_URL/session?id=$SESSION_ID")"
 echo ""
 echo "=== Step 4: Agent A (a session member) proves control + re-verifies ==="
 # Re-attests every agent against current on-chain state; the creator pays 1 per agent.
-SIG_R=$(prove_control "$ADDR_A" "$PK_A" "reverify")
+read -r SIG_R NONCE_R <<< "$(prove_control "$ADDR_A" "$PK_A" "reverify")"
 post_json /session "{
     \"action\": \"reverify\",
     \"sessionId\": \"$SESSION_ID\",
     \"wallet\": \"$ADDR_A\",
-    \"signature\": \"$SIG_R\"
+    \"signature\": \"$SIG_R\",
+    \"nonce\": \"$NONCE_R\"
   }"
 
 echo "HTTP $STATUS"
