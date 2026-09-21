@@ -1,6 +1,6 @@
 {
   "name": "Skye Meta AgentTalk",
-  "description": "Wallet verification for AI agents. Agents declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. 38 blockchains, ES256 signed, USDC native.",
+  "description": "Wallet verification for AI agents. Agents declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. 37 blockchains, ES256 signed, USDC native.",
   "url": "https://skyemeta.com/agenttalk/",
   "version": "1.0.0",
   "capabilities": [
@@ -12,7 +12,7 @@
       "auth": "x-api-key header (InsumerAPI key) or none for free tier (10 calls)",
       "input": {
         "wallet": "Creator's wallet address (0x... for EVM)",
-        "conditions": "Array of conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold (decimal string, e.g. \"1000\"), optional decimals",
+        "conditions": "Array of conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold (decimal string in token units, e.g. \"1000\" = 1000 USDC). decimals is an optional cross-check that is best omitted: the token's own decimals are always read from the chain, and a value that differs is rejected",
         "expiresIn": "Channel TTL in seconds (default 3600)"
       },
       "output": {
@@ -132,7 +132,7 @@
     },
     {
       "name": "InsumerAPI",
-      "description": "The wallet verification engine powering all Skye Meta products. 38 blockchains, ECDSA-signed attestations.",
+      "description": "The wallet verification engine powering all Skye Meta products. 37 blockchains, ECDSA-signed attestations.",
       "url": "https://insumermodel.com/developers/"
     }
   ]

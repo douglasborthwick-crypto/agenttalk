@@ -2,7 +2,7 @@
 
 **Wallet auth for agent-to-agent communication.**
 
-OAuth proves who you are. API keys prove you have permission. AgentTalk proves what you hold — on-chain, across 38 blockchains, cryptographically signed, verifiable by anyone.
+OAuth proves who you are. API keys prove you have permission. AgentTalk proves what you hold: on-chain, across 37 blockchains, cryptographically signed, verifiable by anyone.
 
 Before two agents exchange data, both verify their wallets satisfy the same conditions. Token balances, NFT ownership, compliance attestations — whatever the use case requires. The blockchain state is the credential. Sell your tokens, lose your session. No secrets to share. No identity to verify first. No static credentials that expire or get leaked.
 
@@ -20,7 +20,7 @@ AgentTalk is [condition-based access](https://insumermodel.com/how-it-works/) fo
 |---|---|---|---|---|
 | Proves what agent holds | Yes | No | No | No |
 | Dynamic (sell token = lose access) | Yes | No | No | No |
-| Multi-chain (38 blockchains) | Yes | No | No | No |
+| Multi-chain (37 blockchains) | Yes | No | No | No |
 | Mutual verification (both sides) | Yes | No | No | Yes |
 | Composable (up to 10 conditions) | Yes | No | No | No |
 | No shared secrets | Yes | No | No | Yes |
@@ -44,7 +44,7 @@ Agent A                          AgentTalk                         Agent B
 ```
 
 0. **Prove control** — Before declaring or joining, an agent signs a one-time challenge with its wallet key. On-chain holdings are public, so naming a wallet proves nothing; the signature proves the wallet is the agent's. Control — not knowledge of the address — grants entry.
-1. **Declare** — Agent A signs its challenge, then sets conditions across any of 38 chains. Its wallet is attested immediately.
+1. **Declare**: Agent A signs its challenge, then sets conditions across any of 37 chains. Its wallet is attested immediately.
 2. **Join** — Agent B signs its own challenge, then joins. Both wallets are evaluated against the same conditions.
 3. **Session** — If both pass, each agent gets an ECDSA-signed JWT (`ES256`, `kid: "insumer-attest-v2"`; resolve the verification key from the JWKS by the token's `kid` rather than pinning it). Both can verify at any time.
 4. **Re-verify** — Sessions can be re-attested on demand against current on-chain state. Dynamic enforcement, not a one-time check.
@@ -74,8 +74,8 @@ curl -X POST https://skyemeta.com/api/agenttalk/declare \
         "type": "token_balance",
         "contractAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         "chainId": 1,
-        "threshold": "1000000",
-        "decimals": 6
+        "threshold": "1000",
+        "label": "USDC >= 1000"
       }
     ]
   }'
@@ -108,9 +108,11 @@ Conditions are evaluated by [InsumerAPI](https://insumermodel.com/developers/api
 
 **`token_balance`** — Does the wallet hold at least X tokens?
 ```json
-{ "type": "token_balance", "contractAddress": "0xA0b86991...", "chainId": 1, "threshold": "1000000", "decimals": 6 }
+{ "type": "token_balance", "contractAddress": "0xA0b86991...", "chainId": 1, "threshold": "1000" }
 ```
-Use `"native"` for ETH, BNB, MATIC, SOL, XRP, BTC, etc.
+`threshold` is in token (display) units, as a decimal string: `"1000"` means 1000 USDC, and a $1M floor is `"1000000"`. Leave `decimals` out: the token's own decimals are always read from the chain. If sent it is only a cross-check, and a value that differs from the token's own decimals is rejected.
+
+Use `"native"` as the `contractAddress` for ETH, BNB, MATIC, SOL, XRP, BTC, etc. (`token_balance` only; `nft_ownership` needs the NFT contract address).
 
 **`nft_ownership`** — Does the wallet hold this NFT?
 ```json
@@ -122,7 +124,7 @@ Use `"native"` for ETH, BNB, MATIC, SOL, XRP, BTC, etc.
 { "type": "eas_attestation", "template": "gitcoin_passport_score" }
 ```
 
-Up to 10 conditions per channel. All must pass (AND logic). 38 blockchains: Ethereum, Bitcoin, Solana, XRP Ledger, Polygon, Base, Arbitrum, Optimism, Avalanche, BNB Chain, and 28 more.
+Up to 10 conditions per channel. All must pass (AND logic). 37 blockchains: Ethereum, Bitcoin, Solana, XRP Ledger, Polygon, Base, Arbitrum, Optimism, Avalanche, BNB Chain, and 27 more.
 
 ## Verification
 
