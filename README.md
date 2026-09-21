@@ -47,7 +47,7 @@ Agent A                          AgentTalk                         Agent B
 1. **Declare**: Agent A signs its challenge, then sets conditions across any of 37 chains. Its wallet is attested immediately.
 2. **Join** — Agent B signs its own challenge, then joins. Both wallets are evaluated against the same conditions.
 3. **Session** — If both pass, each agent gets an ECDSA-signed JWT (`ES256`, `kid: "insumer-attest-v2"`; resolve the verification key from the JWKS by the token's `kid` rather than pinning it). Both can verify at any time.
-4. **Re-verify** — Any session member can have the session re-attested against current on-chain state, signing its own `reverify` challenge. Agents that no longer pass are ejected (today, so is an agent whose re-attestation could not be completed). Dynamic enforcement, not a one-time check.
+4. **Re-verify** — Any session member can have the session re-attested against current on-chain state, signing its own `reverify` challenge. Only an agent with a signed "not met" is ejected; if a re-attestation cannot be completed, nobody is ejected and the session is left as it was. Dynamic enforcement, not a one-time check.
 
 ## Quick Start
 
