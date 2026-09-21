@@ -46,22 +46,21 @@ post_json() {
 # explain_refusal <label> — explain a response that did not admit the agent.
 #   401            signature missing, stale or not from this wallet: sign a fresh challenge
 #   402            the channel creator is out of free calls and credits (buy-key)
-#   403 pass:false not admitted. Today this comes back both when a condition is not
-#                  met and when the verification service could not produce a verdict,
-#                  so if you expect the wallet to qualify, retry later
-#   502/503        verification could not be completed: retry later
+#   400            the conditions or wallet fields were rejected as invalid (see error)
+#   403 pass:false a condition is not met: the verification service signed "not met"
+#   503            no verdict could be obtained: retry later
+#   A 400, 503 or 429 costs nothing; only a signed answer uses a call.
 explain_refusal() {
   echo ""
   case "$STATUS" in
     403)
       if [ "$(json_field "$BODY" pass)" = "False" ]; then
-        echo "Not admitted ($1): the signature was accepted, but the wallet was not admitted."
-        echo "Either a condition is not met (expected for a fresh throwaway wallet), or"
-        echo "verification was unavailable. If this wallet should qualify, retry later."
+        echo "Not admitted ($1): a condition is not met (expected for a fresh throwaway wallet)."
       else
         echo "$1 refused (HTTP 403): $(json_field "$BODY" error)"
       fi ;;
-    502|503) echo "Verification unavailable ($1). Retry in a few seconds." ;;
+    400) echo "Conditions rejected ($1): $(json_field "$BODY" error). Nothing was charged." ;;
+    502|503) echo "Verification unavailable ($1). Nothing was charged; retry in a few seconds." ;;
     401) echo "Proof-of-control rejected ($1): $(json_field "$BODY" error). Sign a fresh challenge." ;;
     402) echo "Out of credits ($1): the channel creator must buy credits via /buy-key." ;;
     *)   echo "$1 failed with HTTP $STATUS — check the response above." ;;

@@ -83,18 +83,18 @@ async function reverifySession(sessionId, member) {
 //   401          the signature was missing, stale or not from this wallet: request a
 //                fresh challenge and sign again
 //   402          the channel creator is out of free calls and credits (buy-key)
-//   403 pass:false  not admitted. Today this comes back both when a condition is not
-//                met and when the verification service could not produce a verdict,
-//                so if you expect the wallet to qualify, retry later
-//   502/503      verification could not be completed: retry later
+//   400          the conditions or wallet fields were rejected as invalid (see error)
+//   403 pass:false  a condition is not met: the verification service signed "not met"
+//   503          no verdict could be obtained: retry later
+//   A 400, 503 or 429 costs nothing; only a signed answer uses a call.
 function explainRefusal(label, res) {
   const { status, data } = res;
   if (status === 403 && data.pass === false) {
-    console.log(`\nNot admitted (${label}): the signature was accepted, but the wallet was not`);
-    console.log('admitted. Either a condition is not met (expected for a fresh throwaway wallet),');
-    console.log('or verification was unavailable. If this wallet should qualify, retry later.');
+    console.log(`\nNot admitted (${label}): a condition is not met (expected for a fresh throwaway wallet).`);
+  } else if (status === 400) {
+    console.log(`\nConditions rejected (${label}): ${data.error}. Nothing was charged.`);
   } else if (status === 502 || status === 503) {
-    console.log(`\nVerification unavailable (${label}). Retry in a few seconds.`);
+    console.log(`\nVerification unavailable (${label}). Nothing was charged; retry in a few seconds.`);
   } else if (status === 401) {
     console.log(`\nProof-of-control rejected (${label}): ${data.error}. Request a new challenge and sign again.`);
   } else if (status === 402) {
