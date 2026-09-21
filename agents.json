@@ -2,7 +2,7 @@
   "name": "Skye Meta AgentTalk",
   "description": "Wallet verification for AI agents. Agents prove control of their wallet with a signed one-time challenge, declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. Multi-party sessions with no artificial cap. 37 blockchains, ES256 signed, paid in USDC, USDT or BTC. Every attestation also carries a post-quantum companion (pqSig, pqKid, pqJwt; ML-DSA-65) resolved from the same JWKS; the ES256 signature is unchanged.",
   "url": "https://skyemeta.com/agenttalk/",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "capabilities": [
     {
       "name": "challenge",
@@ -31,6 +31,7 @@
         "signature": "EIP-191 (personal_sign) signature by `wallet` over the message returned by the challenge capability for this wallet and action ('declare')",
         "nonce": "The nonce returned by the challenge capability with this message. Recommended: with it, nobody else's challenge requests can cancel yours. Without it, the most recent challenge for the wallet is used.",
         "conditions": "Array of up to 10 conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold as a decimal STRING (\"100\", not 100). Leave decimals out: the token's own decimals are read from the chain",
+        "reverifyPolicy": "Optional. 'members' (default: any member may re-verify, the creator pays, at most one re-verify per session per 60 seconds), 'creator' (only the creator may re-verify, and pays), or 'requester' (any member may re-verify and the member who asks pays). Fixed for the channel and returned on declare, join and session reads.",
         "capacity": "Max agents in channel (minimum 2, default 2, no upper cap)",
         "autoStart": "If true, session is live immediately and agents join on the fly (default false)",
         "expiresIn": "Channel TTL in whole seconds, 60 to 2592000 (default 3600)",
@@ -46,7 +47,8 @@
         "conditionsHash": "SHA-256 hash of conditions",
         "capacity": "Channel capacity",
         "sessionId": "Session ID (only when autoStart is true)",
-        "expiresAt": "ISO 8601 expiration timestamp"
+        "expiresAt": "ISO 8601 expiration timestamp",
+        "reverifyPolicy": "The channel's re-verify policy"
       }
     },
     {
@@ -73,7 +75,8 @@
         "agentsJoined": "Current agent count (when waiting)",
         "capacity": "Channel capacity (when waiting)",
         "expiresAt": "ISO 8601 expiration timestamp",
-        "agents": "Array of { wallet, wallets, attestation } — attestation is each agent's full InsumerAPI /v1/attest result: attestation, sig, kid, jwt (ES256), and the ML-DSA-65 post-quantum companion pqSig, pqKid, pqJwt"
+        "agents": "Array of { wallet, wallets, attestation } — attestation is each agent's full InsumerAPI /v1/attest result: attestation, sig, kid, jwt (ES256), and the ML-DSA-65 post-quantum companion pqSig, pqKid, pqJwt",
+        "reverifyPolicy": "The channel's re-verify policy (members / creator / requester)"
       }
     },
     {
@@ -91,15 +94,16 @@
         "conditions": "Array of conditions",
         "capacity": "Channel capacity",
         "issuedAt": "ISO 8601 timestamp",
-        "expiresAt": "ISO 8601 timestamp"
+        "expiresAt": "ISO 8601 timestamp",
+        "reverifyPolicy": "The channel's re-verify policy (members / creator / requester)"
       }
     },
     {
       "name": "session_action",
-      "description": "Action-based session management. Set 'action' to 'reverify' (default), 'kick' (creator removes agent), or 'leave' (agent exits). Every action needs a signed challenge for the acting wallet and action. Re-verify must be requested by a session member (or the creator); the creator pays 1 credit per agent. Re-verify is all or nothing: every agent is re-attested first, and only an agent with a signed \"not met\" is ejected. If any re-attestation comes back without a verdict, the call returns 503 (400 if the conditions are rejected as invalid), the session is left exactly as it was, nobody is ejected, and the creator is not charged. Kick is signed by creatorWallet. If the creator leaves, the channel closes.",
+      "description": "Action-based session management. Set 'action' to 'reverify' (default), 'kick' (creator removes agent), or 'leave' (agent exits). Every action needs a signed challenge for the acting wallet and action. Re-verify costs 1 credit per agent. Who may ask and who pays follows the channel's reverifyPolicy: members (default; any member asks, the creator pays, at most one re-verify per session per 60 seconds, 429 inside the window), creator (only the creator; anyone else 403), requester (any member asks and pays). Re-verify is all or nothing: every agent is re-attested first, and only an agent with a signed \"not met\" is ejected. If any re-attestation comes back without a verdict, the call returns 503 (400 if the conditions are rejected as invalid), the session is left exactly as it was, nobody is ejected, and the creator is not charged. Kick is signed by creatorWallet. If the creator leaves, the channel closes.",
       "endpoint": "https://skyemeta.com/api/agenttalk/session",
       "method": "POST",
-      "auth": "signature from the challenge capability for the acting wallet and action (401 without one); re-verify is billed to the channel creator",
+      "auth": "signature from the challenge capability for the acting wallet and action (401 without one); re-verify is billed per the channel's reverifyPolicy",
       "input": {
         "action": "'reverify' (default), 'kick', or 'leave'",
         "sessionId": "Session ID (for reverify)",
@@ -116,7 +120,8 @@
         "kicked": "Wallet removed (kick)",
         "left": "Wallet that departed (leave)",
         "channelClosed": "True if creator left (leave)",
-        "remainingAgents": "Array of remaining wallets (kick/leave)"
+        "remainingAgents": "Array of remaining wallets (kick/leave)",
+        "reverifyPolicy": "The channel's re-verify policy (reverify)"
       }
     },
     {
