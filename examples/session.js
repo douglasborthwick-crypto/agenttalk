@@ -1,21 +1,24 @@
 /**
  * AgentTalk — full session flow (prove control → declare → join → verify → re-verify)
- * Uses the free tier (no API key needed for first 10 calls per wallet)
  *
- * Proof-of-control: on-chain holdings are public, so before any action an agent
- * signs a one-time challenge with its wallet key. Control of the wallet — not
- * knowledge of its address — is what grants entry.
+ * No API key and no signup. The channel creator's wallet gets 10 free calls; after
+ * that it needs credits bought with POST /api/agenttalk/buy-key. Declare and every
+ * join are billed to the creator, and re-verify costs the creator 1 per agent.
  *
- * Wallets: by default this generates fresh, throwaway keypairs. The proof-of-control
- * handshake works with them (the signature is accepted), but AgentTalk only opens a
- * channel for a wallet that actually satisfies the conditions — and a fresh wallet
- * holds nothing. So out of the box this demonstrates control being proven, then stops
- * at the condition gate. To complete a full session, point at a wallet you control and
- * fund, whose holdings satisfy the condition:
+ * Proof-of-control: on-chain holdings are public, so before declare, join and
+ * re-verify the acting agent fetches a one-time challenge for { wallet, action }
+ * and signs it with its wallet key (EIP-191). The challenge is good for one action
+ * and expires after 120 seconds.
  *
- *     DEMO_PRIVATE_KEY=0xYOURKEY node session.js
+ * Wallets: by default this generates fresh, throwaway keypairs. The signature is
+ * accepted, but a fresh wallet holds nothing, so the demo stops at the condition
+ * gate. To complete a full session, supply two different wallets you control that
+ * each hold at least 1 USDC on Ethereum:
  *
- * The key is read only at runtime and never leaves your machine.
+ *     DEMO_PRIVATE_KEY_A=0xKEY_A DEMO_PRIVATE_KEY_B=0xKEY_B node session.js
+ *
+ * (DEMO_PRIVATE_KEY is accepted for Agent A.) Keys are read only at runtime and
+ * never leave your machine.
  *
  * Run: npm install && node session.js
  */
@@ -41,50 +44,64 @@ async function proveControl(account, action) {
   return account.signMessage({ message });
 }
 
-async function postJson(path, body, apiKey) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (apiKey) headers['x-api-key'] = apiKey;
-  const res = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+async function postJson(path, body) {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };
 }
 
-async function declareChannel(account, conditions, apiKey) {
+async function declareChannel(account, conditions) {
   const signature = await proveControl(account, 'declare');
-  return postJson('/declare', { wallet: account.address, signature, conditions }, apiKey);
+  return postJson('/declare', { wallet: account.address, signature, conditions });
 }
 
 async function joinChannel(channelId, account) {
-  // No API key needed — creator pays both sides. Joiner still proves control.
+  // Billed to the channel creator. The joiner still proves control of its wallet.
   const signature = await proveControl(account, 'join');
   return postJson('/join', { channelId, wallet: account.address, signature });
 }
 
 async function verifySession(sessionId) {
-  const res = await fetch(`${BASE_URL}/session?id=${sessionId}`);
+  const res = await fetch(`${BASE_URL}/session?id=${encodeURIComponent(sessionId)}`);
   if (!res.ok) throw new Error(`verify failed: ${res.status}`);
   return res.json();
 }
 
-async function reverifySession(sessionId) {
-  // Re-attests both wallets against current on-chain state (no signature needed —
-  // control was proven at join; re-verify only ever removes wallets that stop qualifying).
-  const res = await fetch(`${BASE_URL}/session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId }),
-  });
-  if (!res.ok) throw new Error(`reverify failed: ${res.status}`);
-  return res.json();
+async function reverifySession(sessionId, member) {
+  // Re-attests every agent against current on-chain state. It must be requested
+  // by a session member, signing a 'reverify' challenge; the creator pays 1 credit
+  // per agent.
+  const signature = await proveControl(member, 'reverify');
+  return postJson('/session', { action: 'reverify', sessionId, wallet: member.address, signature });
 }
 
-// A 403 with pass:false means the signature was accepted (control proven) but the
-// wallet doesn't satisfy the condition — expected for a fresh throwaway wallet.
-function explainGate(label, res) {
-  console.log(`\nProof-of-control accepted — the signature passed server verification.`);
-  console.log(`Condition not met: this wallet holds none of the required tokens, so ${label}`);
-  console.log(`did not open a session. (Expected for a fresh throwaway wallet.) Set`);
-  console.log(`DEMO_PRIVATE_KEY to a funded wallet that satisfies the condition to complete.`);
+// Explain a response that did not admit the agent. Returns nothing; the caller stops.
+//   401          the signature was missing, stale or not from this wallet: request a
+//                fresh challenge and sign again
+//   402          the channel creator is out of free calls and credits (buy-key)
+//   403 pass:false  not admitted. Today this comes back both when a condition is not
+//                met and when the verification service could not produce a verdict,
+//                so if you expect the wallet to qualify, retry later
+//   502/503      verification could not be completed: retry later
+function explainRefusal(label, res) {
+  const { status, data } = res;
+  if (status === 403 && data.pass === false) {
+    console.log(`\nNot admitted (${label}): the signature was accepted, but the wallet was not`);
+    console.log('admitted. Either a condition is not met (expected for a fresh throwaway wallet),');
+    console.log('or verification was unavailable. If this wallet should qualify, retry later.');
+  } else if (status === 502 || status === 503) {
+    console.log(`\nVerification unavailable (${label}). Retry in a few seconds.`);
+  } else if (status === 401) {
+    console.log(`\nProof-of-control rejected (${label}): ${data.error}. Request a new challenge and sign again.`);
+  } else if (status === 402) {
+    console.log(`\nOut of credits (${label}): the channel creator must buy credits via /buy-key.`);
+  } else {
+    console.log(`\n${label} failed with HTTP ${status}: ${data.error || JSON.stringify(data)}`);
+  }
 }
 
 async function main() {
@@ -105,7 +122,7 @@ async function main() {
   const channel = await declareChannel(agentA, conditions);
   console.log(`HTTP ${channel.status}: ${JSON.stringify(channel.data)}`);
   if (channel.status !== 200 || !channel.data.channelId) {
-    if (channel.status === 403 && channel.data.pass === false) explainGate('declare', channel);
+    explainRefusal('declare', channel);
     return;
   }
 
@@ -113,7 +130,7 @@ async function main() {
   const session = await joinChannel(channel.data.channelId, agentB);
   console.log(`HTTP ${session.status}: ${JSON.stringify(session.data)}`);
   if (session.status !== 200 || !session.data.sessionId) {
-    if (session.status === 403 && session.data.pass === false) explainGate('join', session);
+    explainRefusal('join', session);
     return;
   }
 
@@ -122,8 +139,13 @@ async function main() {
   console.log(JSON.stringify(status, null, 2));
 
   console.log('\n=== Step 4: Re-verify (checks current on-chain state) ===');
-  const fresh = await reverifySession(session.data.sessionId);
-  console.log(JSON.stringify(fresh, null, 2));
+  const fresh = await reverifySession(session.data.sessionId, agentA);
+  console.log(`HTTP ${fresh.status}: ${JSON.stringify(fresh.data, null, 2)}`);
+  if (fresh.status !== 200) {
+    explainRefusal('re-verify', fresh);
+  } else if (fresh.data.ejected) {
+    console.log(`Removed on re-verify: ${fresh.data.ejected.join(', ')}`);
+  }
 }
 
 main().catch(console.error);

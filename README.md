@@ -6,7 +6,7 @@ OAuth proves who you are. API keys prove you have permission. AgentTalk proves w
 
 Before two agents exchange data, both verify their wallets satisfy the same conditions. Token balances, NFT ownership, compliance attestations — whatever the use case requires. The blockchain state is the credential. Sell your tokens, lose your session. No secrets to share. No identity to verify first. No static credentials that expire or get leaked.
 
-Three API calls to a mutual session. [Try it free](https://skyemeta.com/agenttalk/) — 10 calls per wallet, no signup.
+A signed challenge and a call per agent to a mutual session. [Try it free](https://skyemeta.com/agenttalk/) — 10 calls per wallet, no signup.
 
 ## Why Not OAuth?
 
@@ -47,7 +47,7 @@ Agent A                          AgentTalk                         Agent B
 1. **Declare**: Agent A signs its challenge, then sets conditions across any of 37 chains. Its wallet is attested immediately.
 2. **Join** — Agent B signs its own challenge, then joins. Both wallets are evaluated against the same conditions.
 3. **Session** — If both pass, each agent gets an ECDSA-signed JWT (`ES256`, `kid: "insumer-attest-v2"`; resolve the verification key from the JWKS by the token's `kid` rather than pinning it). Both can verify at any time.
-4. **Re-verify** — Sessions can be re-attested on demand against current on-chain state. Dynamic enforcement, not a one-time check.
+4. **Re-verify** — Any session member can have the session re-attested against current on-chain state, signing its own `reverify` challenge. Agents that no longer pass are ejected (today, so is an agent whose re-attestation could not be completed). Dynamic enforcement, not a one-time check.
 
 ## Quick Start
 
@@ -91,7 +91,20 @@ curl -X POST https://skyemeta.com/api/agenttalk/join \
 # 4. Verify
 curl "https://skyemeta.com/api/agenttalk/session?id=ses_..."
 # Returns: { "valid": true, "agents": [...], "conditions": [...] }
+
+# 5. Re-verify — a session member signs a challenge with action "reverify", then:
+curl -X POST https://skyemeta.com/api/agenttalk/session \
+  -H "Content-Type: application/json" \
+  -d '{ "action": "reverify", "sessionId": "ses_...", "wallet": "0xAgentA...", "signature": "0x..." }'
+# Returns: { "valid": true, "agents": [...fresh attestations], "ejected": [...] }
 ```
+
+A `403 { "pass": false }` from declare or join means the wallet was not admitted. Today the
+service returns it when a condition is not met, and also when verification could not produce a
+verdict (or rejected the conditions as invalid), so a wallet you expect to qualify can retry later.
+Treat a `502` or `503` as retry-later too. A `401` means the signature was missing, stale or not
+from that wallet: request a fresh challenge. A `402` means the channel creator is out of free calls
+and credits.
 
 See [`examples/`](examples/) for complete scripts in bash, Python, and JavaScript.
 
@@ -99,7 +112,7 @@ See [`examples/`](examples/) for complete scripts in bash, Python, and JavaScrip
 
 - **Supply Chain Negotiation** — Two procurement agents verify they each hold $1M+ USDC before sharing pricing data. On-chain proof of financial capacity, not a signed NDA.
 - **Financial Agent Coordination** — A portfolio agent only shares allocation data with agents holding specific governance tokens. Attestation replaces allow-lists.
-- **Compliance-Gated Data Exchange** — Agents verify each other holds compliance attestation NFTs (e.g., EAS credentials). Revoke the NFT, close the session.
+- **Compliance-Gated Data Exchange** — Agents verify each other holds an on-chain compliance attestation (an EAS attestation such as Coinbase Verified Account). Revoke the attestation, and the next re-verify ejects the agent.
 - **Cross-Org Workflow Automation** — DAO-to-DAO agents verify governance token holdings before executing joint proposals. On-chain qualification replaces manual approval chains.
 
 ## Condition Types
@@ -112,7 +125,7 @@ Conditions are evaluated by [InsumerAPI](https://insumermodel.com/developers/api
 ```
 `threshold` is in token (display) units, as a decimal string: `"1000"` means 1000 USDC, and a $1M floor is `"1000000"`. Leave `decimals` out: the token's own decimals are always read from the chain. If sent it is only a cross-check, and a value that differs from the token's own decimals is rejected.
 
-Use `"native"` as the `contractAddress` for ETH, BNB, MATIC, SOL, XRP, BTC, etc. (`token_balance` only; `nft_ownership` needs the NFT contract address).
+Use `"native"` as the `contractAddress` for ETH, BNB, POL, SOL, XRP, BTC, etc. (`token_balance` only; `nft_ownership` needs the NFT contract address).
 
 **`nft_ownership`** — Does the wallet hold this NFT?
 ```json
@@ -134,16 +147,20 @@ Every attestation is an ES256 JWT. Read the token's `kid` and resolve the matchi
 GET https://insumermodel.com/.well-known/jwks.json
 ```
 
+Each attestation also carries a post-quantum companion (`pqSig`, `pqKid`, and `pqJwt` beside `jwt`; ML-DSA-65), resolved from the same JWKS. The ES256 signature is unchanged.
+
 Works with any standard JWT library: jose, jsonwebtoken, Kong, Nginx, AWS API Gateway. Each condition produces a `conditionHash` (SHA-256 of canonical JSON), so verifiers can confirm exactly which conditions were checked without seeing raw balances.
 
 ## API Reference
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/agenttalk/declare` | POST | `x-api-key` or free tier | Create a condition-gated channel |
-| `/api/agenttalk/join` | POST | None (creator pays) | Join a channel, create mutual session |
+| `/api/agenttalk/challenge` | POST | None | One-time message to sign for `{ wallet, action }` (declare, join, reverify, kick, leave); valid 120 s |
+| `/api/agenttalk/declare` | POST | Signed challenge; 10 free calls per wallet, then credits | Create a condition-gated channel |
+| `/api/agenttalk/join` | POST | Signed challenge (creator pays) | Join a channel, create mutual session |
 | `/api/agenttalk/session` | GET | None | Check session validity |
-| `/api/agenttalk/session` | POST | None (creator pays) | Re-verify both wallets against current state |
+| `/api/agenttalk/session` | POST | Signed challenge from a session member (creator pays 1 credit per agent) | Re-verify every agent against current state; also `kick` (signed by the creator) and `leave` |
+| `/api/agenttalk/buy-key` | POST | The payment transaction | Add credits to the wallet that paid; no key is issued |
 
 Full request/response details: [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/)
 
@@ -163,7 +180,7 @@ GET https://skyemeta.com/.well-known/agents.json
 
 Each session = 2 credits (one per agent). Creator pays both sides. **Free tier: 10 calls per wallet, no key needed.**
 
-Pay with USDC, USDT, or BTC. No signup. See [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/) for details.
+Pay with USDC or USDT on Ethereum, Polygon, Arbitrum, Optimism, Avalanche, BNB Chain or Solana, USDC on Base, or BTC; the minimum is $5. No signup and no API key: submit the transaction hash to `/api/agenttalk/buy-key` and the credits are added to the address that paid. That is the wallet that spends them, so pay from the EVM wallet that creates channels. See [skyemeta.com/agenttalk](https://skyemeta.com/agenttalk/) for details.
 
 ## Protocols
 

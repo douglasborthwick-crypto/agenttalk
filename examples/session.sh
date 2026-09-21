@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# AgentTalk — full session flow (prove control → declare → join → verify)
-# Uses the free tier (no API key needed for first 10 calls per wallet)
+# AgentTalk — full session flow (prove control → declare → join → verify → re-verify)
 #
-# Proof-of-control: on-chain holdings are public, so before any action an agent
-# signs a one-time challenge with its wallet key. Control of the wallet — not
-# knowledge of its address — is what grants entry.
+# No API key and no signup. The channel creator's wallet gets 10 free calls; after
+# that it needs credits bought with POST /api/agenttalk/buy-key. Declare and every
+# join are billed to the creator, and re-verify costs the creator 1 per agent.
+#
+# Proof-of-control: on-chain holdings are public, so before declare, join and
+# re-verify the acting agent fetches a one-time challenge for { wallet, action }
+# and signs it with its wallet key (EIP-191). The challenge is good for one action
+# and expires after 120 seconds.
 #
 # Wallets: by default this generates fresh, throwaway keypairs (cast wallet new).
-# The proof-of-control handshake works with them (the signature is accepted), but
-# AgentTalk only opens a channel for a wallet that actually satisfies the conditions
-# — and a fresh wallet holds nothing. So out of the box this demonstrates control
-# being proven, then stops at the condition gate. To complete a full session, point
-# at a wallet you control and fund, whose holdings satisfy the condition:
+# The signature is accepted, but a fresh wallet holds nothing, so the demo stops
+# at the condition gate. To complete a full session, supply two different wallets
+# you control that each hold at least 1 USDC on Ethereum:
 #
-#     DEMO_PRIVATE_KEY=0xYOURKEY ./session.sh
+#     DEMO_PRIVATE_KEY_A=0xKEY_A DEMO_PRIVATE_KEY_B=0xKEY_B ./session.sh
+#
+# (DEMO_PRIVATE_KEY is accepted for Agent A.)
 #
 # Requires: curl, python3, and foundry's `cast` (https://getfoundry.sh) for
 # keypair generation and EIP-191 message signing.
@@ -30,17 +34,45 @@ json_field() {
 
 pretty() { printf '%s' "$1" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$1"; }
 
-explain_gate() {
-  echo ""
-  echo "Proof-of-control accepted — the signature passed server verification."
-  echo "Condition not met: this wallet holds none of the required tokens, so $1 did"
-  echo "not open a session. (Expected for a fresh throwaway wallet.) Set DEMO_PRIVATE_KEY"
-  echo "to a funded wallet that satisfies the condition to complete the full session."
+# post_json <path> <json-body> — POST, then set STATUS and BODY.
+post_json() {
+  local out
+  out=$(curl -s -w $'\n%{http_code}' -X POST "$BASE_URL$1" \
+    -H "Content-Type: application/json" -d "$2")
+  STATUS="${out##*$'\n'}"
+  BODY="${out%$'\n'*}"
 }
 
-# make_key <ENV_VAR_NAME> — echo a private key from env, else a fresh throwaway one.
+# explain_refusal <label> — explain a response that did not admit the agent.
+#   401            signature missing, stale or not from this wallet: sign a fresh challenge
+#   402            the channel creator is out of free calls and credits (buy-key)
+#   403 pass:false not admitted. Today this comes back both when a condition is not
+#                  met and when the verification service could not produce a verdict,
+#                  so if you expect the wallet to qualify, retry later
+#   502/503        verification could not be completed: retry later
+explain_refusal() {
+  echo ""
+  case "$STATUS" in
+    403)
+      if [ "$(json_field "$BODY" pass)" = "False" ]; then
+        echo "Not admitted ($1): the signature was accepted, but the wallet was not admitted."
+        echo "Either a condition is not met (expected for a fresh throwaway wallet), or"
+        echo "verification was unavailable. If this wallet should qualify, retry later."
+      else
+        echo "$1 refused (HTTP 403): $(json_field "$BODY" error)"
+      fi ;;
+    502|503) echo "Verification unavailable ($1). Retry in a few seconds." ;;
+    401) echo "Proof-of-control rejected ($1): $(json_field "$BODY" error). Sign a fresh challenge." ;;
+    402) echo "Out of credits ($1): the channel creator must buy credits via /buy-key." ;;
+    *)   echo "$1 failed with HTTP $STATUS — check the response above." ;;
+  esac
+}
+
+# make_key <ENV_VAR_NAME> [FALLBACK_ENV_VAR] — echo a private key from env, else a
+# fresh throwaway one.
 make_key() {
-  local envval="${!1:-${DEMO_PRIVATE_KEY:-}}"
+  local envval="${!1:-}"
+  if [ -z "$envval" ] && [ -n "${2:-}" ]; then envval="${!2:-}"; fi
   if [ -n "$envval" ]; then
     echo "$envval"
   else
@@ -59,7 +91,7 @@ prove_control() {
   cast wallet sign --private-key "$pk" "$msg"
 }
 
-PK_A=$(make_key DEMO_PRIVATE_KEY_A)
+PK_A=$(make_key DEMO_PRIVATE_KEY_A DEMO_PRIVATE_KEY)
 PK_B=$(make_key DEMO_PRIVATE_KEY_B)
 ADDR_A=$(cast wallet address --private-key "$PK_A")
 ADDR_B=$(cast wallet address --private-key "$PK_B")
@@ -70,9 +102,7 @@ echo "Agent B: $ADDR_B"
 echo ""
 echo "=== Step 1: Agent A proves control + declares conditions ==="
 SIG_A=$(prove_control "$ADDR_A" "$PK_A" "declare")
-DECLARE_RESPONSE=$(curl -s -X POST "$BASE_URL/declare" \
-  -H "Content-Type: application/json" \
-  -d "{
+post_json /declare "{
     \"wallet\": \"$ADDR_A\",
     \"signature\": \"$SIG_A\",
     \"conditions\": [
@@ -83,43 +113,52 @@ DECLARE_RESPONSE=$(curl -s -X POST "$BASE_URL/declare" \
         \"threshold\": \"1\"
       }
     ]
-  }")
+  }"
 
-pretty "$DECLARE_RESPONSE"
-CHANNEL_ID=$(json_field "$DECLARE_RESPONSE" channelId)
+echo "HTTP $STATUS"
+pretty "$BODY"
+CHANNEL_ID=$(json_field "$BODY" channelId)
 
-if [ -z "$CHANNEL_ID" ]; then
-  if [ "$(json_field "$DECLARE_RESPONSE" pass)" = "False" ]; then
-    explain_gate declare
-    exit 0
-  fi
-  echo "Declare failed — check the response above"
-  exit 1
+if [ "$STATUS" != "200" ] || [ -z "$CHANNEL_ID" ]; then
+  explain_refusal declare
+  exit 0
 fi
 
 echo ""
 echo "=== Step 2: Agent B proves control + joins the channel ==="
 SIG_B=$(prove_control "$ADDR_B" "$PK_B" "join")
-JOIN_RESPONSE=$(curl -s -X POST "$BASE_URL/join" \
-  -H "Content-Type: application/json" \
-  -d "{
+post_json /join "{
     \"channelId\": \"$CHANNEL_ID\",
     \"wallet\": \"$ADDR_B\",
     \"signature\": \"$SIG_B\"
-  }")
+  }"
 
-pretty "$JOIN_RESPONSE"
-SESSION_ID=$(json_field "$JOIN_RESPONSE" sessionId)
+echo "HTTP $STATUS"
+pretty "$BODY"
+SESSION_ID=$(json_field "$BODY" sessionId)
 
-if [ -z "$SESSION_ID" ]; then
-  if [ "$(json_field "$JOIN_RESPONSE" pass)" = "False" ]; then
-    explain_gate join
-    exit 0
-  fi
-  echo "Join failed — check the response above"
-  exit 1
+if [ "$STATUS" != "200" ] || [ -z "$SESSION_ID" ]; then
+  explain_refusal join
+  exit 0
 fi
 
 echo ""
 echo "=== Step 3: Verify session ==="
-curl -s "$BASE_URL/session?id=$SESSION_ID" | python3 -m json.tool 2>/dev/null
+pretty "$(curl -s "$BASE_URL/session?id=$SESSION_ID")"
+
+echo ""
+echo "=== Step 4: Agent A (a session member) proves control + re-verifies ==="
+# Re-attests every agent against current on-chain state; the creator pays 1 per agent.
+SIG_R=$(prove_control "$ADDR_A" "$PK_A" "reverify")
+post_json /session "{
+    \"action\": \"reverify\",
+    \"sessionId\": \"$SESSION_ID\",
+    \"wallet\": \"$ADDR_A\",
+    \"signature\": \"$SIG_R\"
+  }"
+
+echo "HTTP $STATUS"
+pretty "$BODY"
+if [ "$STATUS" != "200" ]; then
+  explain_refusal re-verify
+fi

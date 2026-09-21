@@ -1,21 +1,24 @@
 """
 AgentTalk — full session flow (prove control -> declare -> join -> verify -> re-verify)
-Uses the free tier (no API key needed for first 10 calls per wallet)
 
-Proof-of-control: on-chain holdings are public, so before any action an agent
-signs a one-time challenge with its wallet key. Control of the wallet — not
-knowledge of its address — is what grants entry.
+No API key and no signup. The channel creator's wallet gets 10 free calls; after
+that it needs credits bought with POST /api/agenttalk/buy-key. Declare and every
+join are billed to the creator, and re-verify costs the creator 1 per agent.
 
-Wallets: by default this generates fresh, throwaway keypairs. The proof-of-control
-handshake works with them (the signature is accepted), but AgentTalk only opens a
-channel for a wallet that actually satisfies the conditions — and a fresh wallet
-holds nothing. So out of the box this demonstrates control being proven, then stops
-at the condition gate. To complete a full session, point at a wallet you control and
-fund, whose holdings satisfy the condition:
+Proof-of-control: on-chain holdings are public, so before declare, join and
+re-verify the acting agent fetches a one-time challenge for { wallet, action }
+and signs it with its wallet key (EIP-191). The challenge is good for one action
+and expires after 120 seconds.
 
-    DEMO_PRIVATE_KEY=0xYOURKEY python session.py
+Wallets: by default this generates fresh, throwaway keypairs. The signature is
+accepted, but a fresh wallet holds nothing, so the demo stops at the condition
+gate. To complete a full session, supply two different wallets you control that
+each hold at least 1 USDC on Ethereum:
 
-The key is read only at runtime and never leaves your machine.
+    DEMO_PRIVATE_KEY_A=0xKEY_A DEMO_PRIVATE_KEY_B=0xKEY_B python session.py
+
+(DEMO_PRIVATE_KEY is accepted for Agent A.) Keys are read only at runtime and
+never leave your machine.
 
 Install: pip install requests eth-account
 Run:     python session.py
@@ -33,9 +36,9 @@ from eth_account.messages import encode_defunct
 BASE_URL = "https://skyemeta.com/api/agenttalk"
 
 
-def make_account(env_name: str):
-    """A wallet from an env-supplied private key, or a fresh throwaway one."""
-    pk = os.environ.get(env_name) or os.environ.get("DEMO_PRIVATE_KEY")
+def make_account(*env_names: str):
+    """A wallet from the first env-supplied private key, or a fresh throwaway one."""
+    pk = next((os.environ[n] for n in env_names if os.environ.get(n)), None)
     return Account.from_key(pk) if pk else Account.create()
 
 
@@ -53,18 +56,15 @@ def prove_control(account, action: str) -> str:
     return sig if sig.startswith("0x") else "0x" + sig  # eth-account may omit 0x
 
 
-def declare_channel(account, conditions: list, api_key: str | None = None) -> requests.Response:
+def declare_channel(account, conditions: list) -> requests.Response:
     """Agent A proves control, then declares conditions for a channel."""
     signature = prove_control(account, "declare")
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["x-api-key"] = api_key
     body = {"wallet": account.address, "signature": signature, "conditions": conditions}
-    return requests.post(f"{BASE_URL}/declare", json=body, headers=headers)
+    return requests.post(f"{BASE_URL}/declare", json=body, headers={"Content-Type": "application/json"})
 
 
 def join_channel(channel_id: str, account) -> requests.Response:
-    """Agent B proves control, then joins. No API key needed — creator pays both sides."""
+    """Agent B proves control, then joins. Billed to the channel creator."""
     signature = prove_control(account, "join")
     return requests.post(
         f"{BASE_URL}/join",
@@ -80,28 +80,54 @@ def verify_session(session_id: str) -> dict:
     return resp.json()
 
 
-def reverify_session(session_id: str) -> dict:
-    """Re-attest both wallets against current on-chain state (no signature needed —
-    control was proven at join; re-verify only ever removes wallets that stop qualifying)."""
-    resp = requests.post(
+def reverify_session(session_id: str, member) -> requests.Response:
+    """Re-attest every agent against current on-chain state. Must be requested by a
+    session member, signing a 'reverify' challenge; the creator pays 1 credit per agent."""
+    signature = prove_control(member, "reverify")
+    return requests.post(
         f"{BASE_URL}/session",
-        json={"sessionId": session_id},
+        json={"action": "reverify", "sessionId": session_id,
+              "wallet": member.address, "signature": signature},
         headers={"Content-Type": "application/json"},
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
-def explain_gate(label: str) -> None:
-    """A 403 pass:false means control was proven but the wallet doesn't hold the tokens."""
-    print(f"\nProof-of-control accepted — the signature passed server verification.")
-    print(f"Condition not met: this wallet holds none of the required tokens, so {label}")
-    print("did not open a session. (Expected for a fresh throwaway wallet.) Set")
-    print("DEMO_PRIVATE_KEY to a funded wallet that satisfies the condition to complete.")
+def body_of(resp: requests.Response) -> dict:
+    try:
+        return resp.json()
+    except ValueError:
+        return {}
+
+
+def explain_refusal(label: str, resp: requests.Response) -> None:
+    """Explain a response that did not admit the agent.
+
+    401          the signature was missing, stale or not from this wallet: request a
+                 fresh challenge and sign again
+    402          the channel creator is out of free calls and credits (buy-key)
+    403 pass:false  not admitted. Today this comes back both when a condition is not
+                 met and when the verification service could not produce a verdict,
+                 so if you expect the wallet to qualify, retry later
+    502/503      verification could not be completed: retry later
+    """
+    status, data = resp.status_code, body_of(resp)
+    if status == 403 and data.get("pass") is False:
+        print(f"\nNot admitted ({label}): the signature was accepted, but the wallet was not")
+        print("admitted. Either a condition is not met (expected for a fresh throwaway wallet),")
+        print("or verification was unavailable. If this wallet should qualify, retry later.")
+    elif status in (502, 503):
+        print(f"\nVerification unavailable ({label}). Retry in a few seconds.")
+    elif status == 401:
+        print(f"\nProof-of-control rejected ({label}): {data.get('error')}. "
+              "Request a new challenge and sign again.")
+    elif status == 402:
+        print(f"\nOut of credits ({label}): the channel creator must buy credits via /buy-key.")
+    else:
+        print(f"\n{label} failed with HTTP {status}: {data.get('error') or resp.text}")
 
 
 if __name__ == "__main__":
-    agent_a = make_account("DEMO_PRIVATE_KEY_A")
+    agent_a = make_account("DEMO_PRIVATE_KEY_A", "DEMO_PRIVATE_KEY")
     agent_b = make_account("DEMO_PRIVATE_KEY_B")
 
     # Condition: wallet holds >= 1 USDC on Ethereum
@@ -120,23 +146,26 @@ if __name__ == "__main__":
     print("\n=== Step 1: Prove control + declare channel ===")
     declare_resp = declare_channel(agent_a, conditions)
     print(f"HTTP {declare_resp.status_code}: {declare_resp.text}")
-    channel = declare_resp.json() if declare_resp.ok else {}
+    channel = body_of(declare_resp) if declare_resp.ok else {}
     if not channel.get("channelId"):
-        if declare_resp.status_code == 403:
-            explain_gate("declare")
+        explain_refusal("declare", declare_resp)
         raise SystemExit(0)
 
     print("\n=== Step 2: Prove control + join channel ===")
     join_resp = join_channel(channel["channelId"], agent_b)
     print(f"HTTP {join_resp.status_code}: {join_resp.text}")
-    session = join_resp.json() if join_resp.ok else {}
+    session = body_of(join_resp) if join_resp.ok else {}
     if not session.get("sessionId"):
-        if join_resp.status_code == 403:
-            explain_gate("join")
+        explain_refusal("join", join_resp)
         raise SystemExit(0)
 
     print("\n=== Step 3: Verify session ===")
     print(json.dumps(verify_session(session["sessionId"]), indent=2))
 
     print("\n=== Step 4: Re-verify (checks current on-chain state) ===")
-    print(json.dumps(reverify_session(session["sessionId"]), indent=2))
+    reverify_resp = reverify_session(session["sessionId"], agent_a)
+    print(f"HTTP {reverify_resp.status_code}: {json.dumps(body_of(reverify_resp), indent=2)}")
+    if reverify_resp.status_code != 200:
+        explain_refusal("re-verify", reverify_resp)
+    elif body_of(reverify_resp).get("ejected"):
+        print("Removed on re-verify: " + ", ".join(body_of(reverify_resp)["ejected"]))

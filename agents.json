@@ -1,41 +1,77 @@
 {
   "name": "Skye Meta AgentTalk",
-  "description": "Wallet verification for AI agents. Agents declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. 37 blockchains, ES256 signed, USDC native.",
+  "description": "Wallet verification for AI agents. Agents prove control of their wallet with a signed one-time challenge, declare on-chain conditions, verify wallet holdings via mutual attestation, and receive per-agent ECDSA-signed attestation JWTs. Multi-party sessions with no artificial cap. 37 blockchains, ES256 signed, paid in USDC, USDT or BTC. Every attestation also carries a post-quantum companion (pqSig, pqKid, pqJwt; ML-DSA-65) resolved from the same JWKS; the ES256 signature is unchanged.",
   "url": "https://skyemeta.com/agenttalk/",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "capabilities": [
     {
+      "name": "challenge",
+      "description": "Issue a one-time proof-of-control challenge. Required before declare, join, and every session action (reverify, kick, leave): sign the returned message with the wallet's key (EIP-191 personal_sign) and send the signature with the action. One active challenge per wallet; it is consumed by the next action that checks it (pass or fail) and expires after 120 seconds. Without a valid signature those actions return 401.",
+      "endpoint": "https://skyemeta.com/api/agenttalk/challenge",
+      "method": "POST",
+      "auth": "none (rate limited to 30 per wallet per minute)",
+      "input": {
+        "wallet": "EVM wallet address (0x...) that will act",
+        "action": "'declare', 'join', 'reverify', 'kick', or 'leave'"
+      },
+      "output": {
+        "message": "Exact text to sign: \"AgentTalk proof-of-control\\nAction: <action>\\nWallet: <lowercased wallet>\\nNonce: <nonce>\"",
+        "nonce": "One-time nonce (hex)",
+        "expiresInSec": "Seconds the challenge stays valid (120)"
+      }
+    },
+    {
       "name": "declare",
-      "description": "Declare on-chain conditions for a new channel. Creator's wallet is attested against conditions.",
+      "description": "Declare on-chain conditions for a new channel. The creator's wallet is attested against the conditions. Supports bilateral sessions, multi-party rooms, and town halls — no upper cap on agents. 403 { pass: false } means the wallet was not admitted. The deployed service returns it when a condition is not met, and also when the verification service could not produce a verdict or rejected the conditions as invalid, so a wallet that should qualify can retry later. A 502 or 503 means verification could not be completed: retry later.",
       "endpoint": "https://skyemeta.com/api/agenttalk/declare",
       "method": "POST",
-      "auth": "x-api-key header (InsumerAPI key) or none for free tier (10 calls)",
+      "auth": "signature from the challenge capability (action 'declare'); no API key. Billing: 10 free calls per creator wallet, then 1 credit per call from credits bought via buy_credits (402 when none remain).",
       "input": {
-        "wallet": "Creator's wallet address (0x... for EVM)",
-        "conditions": "Array of conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold (decimal string in token units, e.g. \"1000\" = 1000 USDC). decimals is an optional cross-check that is best omitted: the token's own decimals are always read from the chain, and a value that differs is rejected",
-        "expiresIn": "Channel TTL in seconds (default 3600)"
+        "wallet": "Creator's EVM wallet address (0x...)",
+        "signature": "EIP-191 (personal_sign) signature by `wallet` over the message returned by the challenge capability for this wallet and action ('declare')",
+        "conditions": "Array of up to 10 conditions, each with type (token_balance|nft_ownership|eas_attestation), contractAddress, chainId, threshold as a decimal STRING (\"100\", not 100). Leave decimals out: the token's own decimals are read from the chain",
+        "capacity": "Max agents in channel (minimum 2, default 2, no upper cap)",
+        "autoStart": "If true, session is live immediately and agents join on the fly (default false)",
+        "expiresIn": "Channel TTL in whole seconds, 60 to 2592000 (default 3600)",
+        "solanaWallet": "Optional Solana address, passed through to the attestation for conditions on Solana. Control of it is not proven; only the EVM wallet signs",
+        "xrplWallet": "Optional XRPL address, passed through to the attestation for conditions on XRPL. Control of it is not proven; only the EVM wallet signs",
+        "bitcoinWallet": "Optional Bitcoin address, passed through to the attestation for conditions on Bitcoin. Control of it is not proven; only the EVM wallet signs",
+        "tronWallet": "Optional Tron address, passed through to the attestation for conditions on Tron. Control of it is not proven; only the EVM wallet signs",
+        "stellarWallet": "Optional Stellar address, passed through to the attestation for conditions on Stellar. Control of it is not proven; only the EVM wallet signs",
+        "suiWallet": "Optional Sui address, passed through to the attestation for conditions on Sui. Control of it is not proven; only the EVM wallet signs"
       },
       "output": {
         "channelId": "Unique channel identifier (ch_...)",
         "conditionsHash": "SHA-256 hash of conditions",
+        "capacity": "Channel capacity",
+        "sessionId": "Session ID (only when autoStart is true)",
         "expiresAt": "ISO 8601 expiration timestamp"
       }
     },
     {
       "name": "join",
-      "description": "Join an existing channel. Joiner's wallet is attested. If both agents pass, per-agent ECDSA-signed attestation JWTs are returned.",
+      "description": "Join an existing channel. The joiner's wallet is attested against the channel's conditions. For autoStart channels, the agent is added to the live session. For standard channels, the session activates when capacity is reached. 403 { pass: false } means the wallet was not admitted. The deployed service returns it when a condition is not met, and also when the verification service could not produce a verdict or rejected the conditions as invalid, so a wallet that should qualify can retry later. A 502 or 503 means verification could not be completed: retry later.",
       "endpoint": "https://skyemeta.com/api/agenttalk/join",
       "method": "POST",
-      "auth": "none (billed to channel creator)",
+      "auth": "signature from the challenge capability (action 'join'); billed to the channel creator (free calls first, then 1 credit)",
       "input": {
         "channelId": "Channel ID from declare response",
-        "wallet": "Joiner's wallet address",
-        "solanaWallet": "Optional Solana wallet address"
+        "wallet": "Joiner's EVM wallet address",
+        "signature": "EIP-191 (personal_sign) signature by `wallet` over the message returned by the challenge capability for this wallet and action ('join')",
+        "solanaWallet": "Optional Solana address, passed through to the attestation for conditions on Solana. Control of it is not proven; only the EVM wallet signs",
+        "xrplWallet": "Optional XRPL address, passed through to the attestation for conditions on XRPL. Control of it is not proven; only the EVM wallet signs",
+        "bitcoinWallet": "Optional Bitcoin address, passed through to the attestation for conditions on Bitcoin. Control of it is not proven; only the EVM wallet signs",
+        "tronWallet": "Optional Tron address, passed through to the attestation for conditions on Tron. Control of it is not proven; only the EVM wallet signs",
+        "stellarWallet": "Optional Stellar address, passed through to the attestation for conditions on Stellar. Control of it is not proven; only the EVM wallet signs",
+        "suiWallet": "Optional Sui address, passed through to the attestation for conditions on Sui. Control of it is not proven; only the EVM wallet signs"
       },
       "output": {
-        "sessionId": "Unique session identifier (ses_...)",
+        "sessionId": "Session ID (when session is active)",
+        "status": "'waiting' if capacity not yet reached",
+        "agentsJoined": "Current agent count (when waiting)",
+        "capacity": "Channel capacity (when waiting)",
         "expiresAt": "ISO 8601 expiration timestamp",
-        "agents": "Array of { wallet, attestation: { attestation, sig, kid, jwt } } — each agent's full InsumerAPI attestation including ES256 JWT"
+        "agents": "Array of { wallet, wallets, attestation } — attestation is each agent's full InsumerAPI /v1/attest result: attestation, sig, kid, jwt (ES256), and the ML-DSA-65 post-quantum companion pqSig, pqKid, pqJwt"
       }
     },
     {
@@ -43,76 +79,160 @@
       "description": "Check if a session is still valid.",
       "endpoint": "https://skyemeta.com/api/agenttalk/session",
       "method": "GET",
-      "auth": "none",
+      "auth": "none (session lookup is open; stored attestations are JWS-verifiable against the InsumerAPI JWKS)",
       "input": {
         "id": "Session ID (query parameter)"
       },
       "output": {
         "valid": "boolean",
-        "agents": "Array of wallet addresses",
+        "agents": "Array of { wallet, wallets, attestation }",
         "conditions": "Array of conditions",
+        "capacity": "Channel capacity",
         "issuedAt": "ISO 8601 timestamp",
         "expiresAt": "ISO 8601 timestamp"
       }
     },
     {
-      "name": "session_reverify",
-      "description": "Re-attest both wallets against conditions. If either wallet no longer qualifies, session is invalidated.",
+      "name": "session_action",
+      "description": "Action-based session management. Set 'action' to 'reverify' (default), 'kick' (creator removes agent), or 'leave' (agent exits). Every action needs a signed challenge for the acting wallet and action. Re-verify must be requested by a session member (or the creator); the creator pays 1 credit per agent, and any agent whose re-attestation does not come back passing is ejected — on the deployed service that includes a re-attestation that could not be completed. Kick is signed by creatorWallet. If the creator leaves, the channel closes.",
       "endpoint": "https://skyemeta.com/api/agenttalk/session",
       "method": "POST",
-      "auth": "none (billed to channel creator)",
+      "auth": "signature from the challenge capability for the acting wallet and action (401 without one); re-verify is billed to the channel creator",
       "input": {
-        "sessionId": "Session ID to re-verify"
+        "action": "'reverify' (default), 'kick', or 'leave'",
+        "sessionId": "Session ID (for reverify)",
+        "channelId": "Channel ID (for kick/leave)",
+        "wallet": "A session member signing the request (reverify), the wallet to kick (kick), or the wallet leaving (leave)",
+        "creatorWallet": "Creator's wallet, which signs the kick (kick only)",
+        "signature": "EIP-191 signature of the challenge: by wallet for reverify and leave, by creatorWallet for kick"
       },
       "output": {
-        "valid": "boolean",
-        "agents": "Array of wallet addresses",
-        "conditions": "Array of conditions"
+        "valid": "boolean (reverify)",
+        "agents": "Array of surviving agents with fresh attestations (reverify)",
+        "ejected": "Array of wallets removed on re-verify",
+        "kicked": "Wallet removed (kick)",
+        "left": "Wallet that departed (leave)",
+        "channelClosed": "True if creator left (leave)",
+        "remainingAgents": "Array of remaining wallets (kick/leave)"
       }
     },
     {
-      "name": "buy_key",
-      "description": "Purchase an InsumerAPI key with USDC. Send USDC to the payment wallet first, then submit the transaction hash.",
+      "name": "buy_credits",
+      "description": "Buy AgentTalk credits with USDC, USDT, or BTC. Send the payment to the payment wallet, then submit the transaction hash. The paid amount is read from the chain; no API key is issued. Credits accrue to the address that sent the payment and are spent by that wallet when it creates channels, so pay from the EVM wallet that will declare. A Solana or Bitcoin payment credits the sending Solana or Bitcoin address.",
       "endpoint": "https://skyemeta.com/api/agenttalk/buy-key",
       "method": "POST",
-      "auth": "none",
+      "auth": "none: the transaction itself is the proof of payment. Each transaction hash can be used once (409 on reuse)",
       "input": {
-        "txHash": "USDC transfer transaction hash",
-        "chainId": "Chain ID (1, 8453, 137, 42161, 10, 43114, 56, or 'solana')",
-        "amount": "USDC amount sent (minimum $5)",
+        "txHash": "Transfer transaction hash",
+        "chainId": "1, 8453, 137, 42161, 10, 43114, 56, 'solana', or 'bitcoin'",
         "appName": "Optional agent/app name"
       },
       "output": {
-        "apiKey": "InsumerAPI key (insr_live_...)",
-        "credits": "Number of credits purchased",
-        "usdcPaid": "USDC amount",
-        "expiresAt": "Key expiration (30 days)"
+        "wallet": "Address the payment came from; the credits are held by this address",
+        "creditsAdded": "Credits from this purchase",
+        "creditBalance": "Total balance after top-up",
+        "usdPaid": "USD value verified",
+        "chain": "Chain name",
+        "rate": "Credits per dollar at this tier"
       }
     }
   ],
   "payment": {
-    "method": "USDC",
+    "method": "USDC, USDT, or BTC",
     "wallets": {
       "evm": "0xAd982CB19aCCa2923Df8F687C0614a7700255a23",
-      "solana": "6a1mLjefhvSJX1sEX8PTnionbE9DqoYjU6F6bNkT4Ydr"
+      "solana": "6a1mLjefhvSJX1sEX8PTnionbE9DqoYjU6F6bNkT4Ydr",
+      "bitcoin": "bc1qg7qnerdhlmdn899zemtez5tcx2a2snc0dt9dt0"
     },
     "supported_chains": [
-      {"name": "Ethereum", "chainId": 1},
-      {"name": "Base", "chainId": 8453},
-      {"name": "Polygon", "chainId": 137},
-      {"name": "Arbitrum", "chainId": 42161},
-      {"name": "Optimism", "chainId": 10},
-      {"name": "Avalanche", "chainId": 43114},
-      {"name": "BNB Chain", "chainId": 56},
-      {"name": "Solana", "chainId": "solana"}
+      {
+        "name": "Ethereum",
+        "chainId": 1,
+        "tokens": [
+          "USDC",
+          "USDT"
+        ]
+      },
+      {
+        "name": "Base",
+        "chainId": 8453,
+        "tokens": [
+          "USDC"
+        ]
+      },
+      {
+        "name": "Polygon",
+        "chainId": 137,
+        "tokens": [
+          "USDC",
+          "USDT"
+        ]
+      },
+      {
+        "name": "Arbitrum",
+        "chainId": 42161,
+        "tokens": [
+          "USDC",
+          "USDT"
+        ]
+      },
+      {
+        "name": "Optimism",
+        "chainId": 10,
+        "tokens": [
+          "USDC",
+          "USDT"
+        ]
+      },
+      {
+        "name": "Avalanche",
+        "chainId": 43114,
+        "tokens": [
+          "USDC",
+          "USDT"
+        ]
+      },
+      {
+        "name": "BNB Chain",
+        "chainId": 56,
+        "tokens": [
+          "USDC",
+          "USDT"
+        ]
+      },
+      {
+        "name": "Solana",
+        "chainId": "solana",
+        "tokens": [
+          "USDC",
+          "USDT"
+        ]
+      },
+      {
+        "name": "Bitcoin",
+        "chainId": "bitcoin",
+        "tokens": [
+          "BTC"
+        ],
+        "note": "Confirmed transactions only, valued in USD at the current BTC price"
+      }
     ],
-    "minimum": "$5 USDC",
+    "minimum": "$5 USD (verified on-chain value)",
     "credit_tiers": [
-      {"range": "$5–$99", "rate": "25 credits per $1"},
-      {"range": "$100–$499", "rate": "33 credits per $1"},
-      {"range": "$500+", "rate": "50 credits per $1"}
+      {
+        "range": "$5–$99",
+        "rate": "25 credits per $1"
+      },
+      {
+        "range": "$100–$499",
+        "rate": "33 credits per $1"
+      },
+      {
+        "range": "$500+",
+        "rate": "50 credits per $1"
+      }
     ],
-    "free_tier": "10 attestation calls per agent wallet, no key required"
+    "free_tier": "10 calls per creator wallet, no key or signup required. The wallet is your identity; each call is proven with a signed challenge."
   },
   "provider": {
     "name": "Skye Meta",
@@ -121,19 +241,46 @@
   },
   "related_products": [
     {
+      "name": "@skyemeta/access",
+      "description": "Free, MIT-licensed npm SDK for adding wallet authentication to any Node API. Either-or middleware: API-key customers keep working unchanged while agent customers authenticate with a wallet signature. The open-source primitive that pairs with Skye Meta's managed products.",
+      "url": "https://skyemeta.com/access/",
+      "npm": "https://www.npmjs.com/package/@skyemeta/access",
+      "source": "https://github.com/douglasborthwick-crypto/skyemeta-access",
+      "license": "MIT"
+    },
+    {
+      "name": "Bothy",
+      "description": "The issuer. A community issues ONE soulbound membership pass to its people; every recognizing surface welcomes it under one license. Skye License $49/mo or $350/yr; members never pay.",
+      "url": "https://skyemeta.com/bothy/"
+    },
+    {
+      "name": "SkyeProfile",
+      "description": "The complete wallet fingerprint. One API call returns eleven independently signed trust dimensions across ten independent issuers. Each dimension signed by its provider, verifiable offline via JWKS. 37-chain foundation, ES256 + EdDSA.",
+      "url": "https://skyemeta.com/skyeprofile/"
+    },
+    {
       "name": "SkyeGate",
-      "description": "Wallet-verified content for WordPress. Verify a wallet before showing pages, downloads, or articles.",
+      "description": "Recognize members in website content. Show WordPress or Next.js pages, posts, and downloads only to members (or any wallet meeting your conditions). Token/NFT/EAS/Farcaster, up to 10 stacked.",
       "url": "https://skyemeta.com/skyegate/"
     },
     {
       "name": "SkyeWoo",
-      "description": "Wallet-verified commerce for WooCommerce. Offer discounts and unlock products based on what a wallet holds.",
+      "description": "Recognize members at WooCommerce checkout. Automatic member pricing and condition-based products, no coupon codes to leak.",
       "url": "https://skyemeta.com/skyewoo/"
     },
     {
+      "name": "Skye Recognition for Shopify",
+      "description": "Recognize members at Shopify checkout and POS. Member pricing appears automatically; no coupon codes, no member list shared.",
+      "url": "https://skyemeta.com/shopify/"
+    },
+    {
       "name": "InsumerAPI",
-      "description": "The wallet verification engine powering all Skye Meta products. 37 blockchains, ECDSA-signed attestations.",
+      "description": "The condition-based access API powering all Skye Meta products. Any condition, any chain across 37 blockchains, ECDSA-signed attestations verifiable offline via JWKS, each carrying an ML-DSA-65 post-quantum companion since September 2026 (five-entry JWKS at https://insumermodel.com/.well-known/jwks.json; key binding at https://insumermodel.com/.well-known/pq-key-binding.json).",
       "url": "https://insumermodel.com/developers/"
     }
-  ]
+  ],
+  "developer_overview": {
+    "url": "https://skyemeta.com/developers/",
+    "description": "The developer track: read a wallet, check a condition, act on a signed answer. Three primitives — SkyeProfile (wallet trust), AgentTalk (agent sessions), @skyemeta/access (API middleware) — on InsumerAPI, the condition-based access API."
+  }
 }
